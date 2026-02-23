@@ -411,6 +411,63 @@ function handleSelectClick(e) {
 }
 $out.addEventListener('click', handleSelectClick);
 
+// ==增强的引擎验证（自检自查）============================================
+async function validateEngine(eng) {
+  const testStr = 'StarBrickVII_VALIDATION_123';
+  const testBinary = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x7F, 0x80, 0xFF, 0x00, 0x0A, 0x0D, 0x20, 0x41, 0x5A, 0x61, 0x7A, 0x00]);
+  try {
+    // 1. 测试编码至少产生输出
+    const enc = await eng.encode(testStr);
+    if (!enc.output || !enc.output.length) 
+      return { ok: false, error: 'Encode produced no output' };
+
+    // 2. 如果引擎声称可逆，测试解码后匹配原始字符串
+    if (eng.reversible) {
+      const dec = await eng.decode(enc.output);
+      if (!dec.output) return { ok: false, error: 'Decode failed' };
+      const outStr = typeof dec.output === 'string' ? dec.output : new TextDecoder().decode(dec.output);
+      if (outStr !== testStr) return { ok: false, error: 'Reversible mismatch' };
+    }
+
+    // 3. 如果引擎声称自逆，测试 encode(encode(x)) == x
+    if (eng.selfInverse) {
+      // 自逆意味着 encode 和 decode 是同一函数，因此调用 encode 两次应还原
+      const enc1 = await eng.encode(testStr);
+      if (!enc1.output) return { ok: false, error: 'Self-inverse encode failed' };
+      const enc2 = await eng.encode(enc1.output);
+      if (!enc2.output) return { ok: false, error: 'Self-inverse second encode failed' };
+      const outStr2 = typeof enc2.output === 'string' ? enc2.output : new TextDecoder().decode(enc2.output);
+      if (outStr2 !== testStr) return { ok: false, error: 'Self-inverse mismatch' };
+    }
+
+    // 4. 如果引擎声称二进制安全，测试处理二进制数据
+    if (eng.binarySafe) {
+      // 对二进制数据进行编码
+      const encBin = await eng.encode(testBinary);
+      if (!encBin.output) return { ok: false, error: 'Binary-safe encode failed' };
+      
+      // 如果引擎可逆或自逆，解码后应与原始二进制一致
+      if (eng.reversible || eng.selfInverse) {
+        const decBin = await eng.decode(encBin.output);
+        if (!decBin.output) return { ok: false, error: 'Binary-safe decode failed' };
+        const decBytes = decBin.output instanceof Uint8Array ? decBin.output : new Uint8Array(decBin.output);
+        if (decBytes.length !== testBinary.length) return { ok: false, error: 'Binary-safe size mismatch' };
+        for (let i = 0; i < testBinary.length; i++) {
+          if (decBytes[i] !== testBinary[i]) return { ok: false, error: 'Binary-safe content mismatch' };
+        }
+      } else {
+        // 对于不可逆的二进制安全引擎，我们至少确保编码不崩溃
+        // 可以添加一些基本检查，如输出不含 null 字节（如果引擎输出文本）
+        // 此处跳过进一步检查
+      }
+    }
+
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 // ==COMMANDS (内置命令)==================================================
 const cmds = {
   help() {
