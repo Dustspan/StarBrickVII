@@ -253,7 +253,7 @@ function callEngine(engineId, type, input) {
   });
 }
 
-// ==大文件分块处理=======================================================
+// ==大文件分块处理 (仅用于支持流式的引擎，如 binary 编码)=====================
 async function processFile(file, engineId, mode) {
   const CHUNK_SIZE = 64 * 1024; // 64KB
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
@@ -578,14 +578,26 @@ async function confirmOp() {
 async function execute() {
   print('<span class="info">Processing...</span>');
   try {
+    const engine = S.engines.get(S.currentEngineId);
+    if (!engine) throw new Error('Engine not found');
+    
     let resultBlob;
     if (S.inputType === 'text') {
       const input = new TextEncoder().encode(S.inputData).buffer;
       resultBlob = await callEngine(S.currentEngineId, S.mode, input);
     } else {
-      resultBlob = await processFile(S.inputData, S.currentEngineId, S.mode);
+      // 文件输入：根据引擎和模式决定是否分块
+      const nonStreamingEngines = ['hex', 'base64']; // 需要完整输入的引擎
+      if (S.mode === 'decode' && nonStreamingEngines.includes(engine.id)) {
+        // 解码且为需要对齐的引擎，不分块（一次性读取）
+        const arrayBuffer = await S.inputData.arrayBuffer();
+        resultBlob = await callEngine(S.currentEngineId, S.mode, arrayBuffer);
+      } else {
+        // 编码（可流式）或其他引擎（如 binary）可以使用分块
+        resultBlob = await processFile(S.inputData, S.currentEngineId, S.mode);
+      }
     }
-    // 如果结果较小，转为字符串方便显示
+    
     if (resultBlob.size < 1024 * 1024) {
       const text = await resultBlob.text();
       S.outputData = text;
