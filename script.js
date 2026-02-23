@@ -43,7 +43,7 @@ const S = {
   mode: 'encode',
   inputType: null,               // 'text' or 'file'
   inputData: null,               // for text: string; for file: File object
-  outputData: null,              // result as Blob or string
+  outputData: null,              // result as Blob (always Blob)
   history: [],                   // command history (strings)
   histIdx: -1,
   imode: 'cmd',                  // 'cmd', 'select', 'pager'
@@ -431,7 +431,6 @@ async function validateEngine(eng) {
 
     // 3. 如果引擎声称自逆，测试 encode(encode(x)) == x
     if (eng.selfInverse) {
-      // 自逆意味着 encode 和 decode 是同一函数，因此调用 encode 两次应还原
       const enc1 = await eng.encode(testStr);
       if (!enc1.output) return { ok: false, error: 'Self-inverse encode failed' };
       const enc2 = await eng.encode(enc1.output);
@@ -442,11 +441,9 @@ async function validateEngine(eng) {
 
     // 4. 如果引擎声称二进制安全，测试处理二进制数据
     if (eng.binarySafe) {
-      // 对二进制数据进行编码
       const encBin = await eng.encode(testBinary);
       if (!encBin.output) return { ok: false, error: 'Binary-safe encode failed' };
       
-      // 如果引擎可逆或自逆，解码后应与原始二进制一致
       if (eng.reversible || eng.selfInverse) {
         const decBin = await eng.decode(encBin.output);
         if (!decBin.output) return { ok: false, error: 'Binary-safe decode failed' };
@@ -455,10 +452,6 @@ async function validateEngine(eng) {
         for (let i = 0; i < testBinary.length; i++) {
           if (decBytes[i] !== testBinary[i]) return { ok: false, error: 'Binary-safe content mismatch' };
         }
-      } else {
-        // 对于不可逆的二进制安全引擎，我们至少确保编码不崩溃
-        // 可以添加一些基本检查，如输出不含 null 字节（如果引擎输出文本）
-        // 此处跳过进一步检查
       }
     }
 
@@ -531,7 +524,14 @@ const cmds = {
       setPs('$');
       if (sel.value === 'view') {
         if (S.outputData instanceof Blob) {
-          print('<span class="warn">Result is too large to display, please download.</span>');
+          // 尝试作为文本显示，但给出警告
+          const reader = new FileReader();
+          reader.onload = () => {
+            const text = new TextDecoder().decode(reader.result);
+            print('<span class="warn">Displaying as text. If you see garbage, it may be binary data; use "hex" instead.</span>');
+            showPaged(text);
+          };
+          reader.readAsArrayBuffer(S.outputData);
         } else {
           showPaged(S.outputData);
         }
@@ -643,24 +643,17 @@ async function execute() {
       const input = new TextEncoder().encode(S.inputData).buffer;
       resultBlob = await callEngine(S.currentEngineId, S.mode, input);
     } else {
-      // 文件输入：根据引擎和模式决定是否分块
       const nonStreamingEngines = ['hex', 'base64']; // 需要完整输入的引擎
       if (S.mode === 'decode' && nonStreamingEngines.includes(engine.id)) {
-        // 解码且为需要对齐的引擎，不分块（一次性读取）
         const arrayBuffer = await S.inputData.arrayBuffer();
         resultBlob = await callEngine(S.currentEngineId, S.mode, arrayBuffer);
       } else {
-        // 编码（可流式）或其他引擎（如 binary）可以使用分块
         resultBlob = await processFile(S.inputData, S.currentEngineId, S.mode);
       }
     }
     
-    if (resultBlob.size < 1024 * 1024) {
-      const text = await resultBlob.text();
-      S.outputData = text;
-    } else {
-      S.outputData = resultBlob;
-    }
+    // 始终保存为 Blob，不再自动转换为文本
+    S.outputData = resultBlob;
     print(`<span class="ok">${S.mode.toUpperCase()} COMPLETE</span>`);
     print(`<span class="dim">Output: ${resultBlob.size} bytes</span>`);
     setTimeout(() => cmds.result(), 500);
