@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>StarBrickVII</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="bg-canvas"></canvas>
+  <div class="app-wrap">
+    <div class="term brick-bg">
+      <div class="term-hdr">
+        <div class="dot r"></div>
+        <div class="dot y"></div>
+        <div class="dot g"></div>
+        <div class="hdr-title">StarBrickVII</div>
+        <div style="width:30px"></div>
+      </div>
+      <div class="output" id="out"></div>
+      <div class="input-row">
+        <span class="ps" id="ps">$</span>
+        <input type="text" class="ti" id="ti" autofocus autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="help...">
+      </div>
+    </div>
+  </div>
+  <div class="modal-overlay" id="modal">
+    <div class="modal-box">
+      <div class="modal-hdr">
+        <span id="modal-title">Input Text</span>
+        <button class="modal-close" id="modal-x">&times;</button>
+      </div>
+      <div class="modal-body">
+        <textarea class="modal-textarea" id="modal-text" placeholder="Paste or type content here... (Ctrl+Enter to confirm)"></textarea>
+        <div class="modal-actions">
+          <button class="modal-btn cancel" id="modal-cancel">Cancel</button>
+          <button class="modal-btn confirm" id="modal-ok">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="wasm-fi" class="fi" accept=".wasm">
+  <input type="file" id="data-fi" class="fi">
+  <script src="script.js"></script>
+</body>
+</html>
