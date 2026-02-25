@@ -36,25 +36,23 @@ cargo build --target wasm32-unknown-unknown --release
 \`\`\`
 `;
 
-// ==STATE================================================================
 const S = {
-  engines: new Map(),           // engineId -> { name, desc, binarySafe, selfInverse, reversible, worker }
+  engines: new Map(),
   currentEngineId: null,
   mode: 'encode',
-  inputType: null,               // 'text' or 'file'
-  inputData: null,               // for text: string; for file: File object
-  outputData: null,              // result as Blob (always Blob)
-  history: [],                   // command history (strings)
+  inputType: null,
+  inputData: null,
+  outputData: null,
+  history: [],
   histIdx: -1,
-  imode: 'cmd',                  // 'cmd', 'select', 'pager'
+  imode: 'cmd',
   selectOpts: [],
   selectCb: null,
   pager: null,
-  pendingRequests: new Map(),    // requestId -> { resolve, reject, chunks: [] } (for streaming, currently not fully used)
+  pendingRequests: new Map(),
   nextRequestId: 0
 };
 
-// ==DOM ELEMENTS========================================================
 const $out = document.getElementById('out');
 const $ti = document.getElementById('ti');
 const $ps = document.getElementById('ps');
@@ -67,7 +65,6 @@ const $modalOk = document.getElementById('modal-ok');
 const $modalCancel = document.getElementById('modal-cancel');
 const $modalX = document.getElementById('modal-x');
 
-// ==UTILITIES===========================================================
 const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const print = (t, c = '') => {
@@ -76,7 +73,6 @@ const print = (t, c = '') => {
   e.innerHTML = t;
   $out.appendChild(e);
   $out.scrollTop = $out.scrollHeight;
-  // 限制最大行数，防止内存爆炸（简化虚拟滚动）
   while ($out.children.length > 500) $out.removeChild($out.firstChild);
 };
 
@@ -84,7 +80,6 @@ const clear = () => $out.innerHTML = '';
 const setPs = s => $ps.textContent = s;
 const clearTi = () => $ti.value = '';
 
-// ==BACKGROUND ANIMATION (流星)=========================================
 (function() {
   const c = document.getElementById('bg-canvas');
   if (!c) return;
@@ -167,7 +162,6 @@ const clearTi = () => $ti.value = '';
   if (!matchMedia('(prefers-reduced-motion: reduce)').matches) init();
 })();
 
-// ==WORKER MANAGEMENT===================================================
 function createWorkerForEngine(wasmUrl) {
   const worker = new Worker('engine-worker.js');
   return new Promise((resolve, reject) => {
@@ -222,7 +216,6 @@ async function loadPresets() {
   print(`<span class="dim">${S.engines.size} engine(s) registered</span>`);
 }
 
-// ==ENCODE/DECODE REQUEST (文本/小数据)==================================
 function callEngine(engineId, type, input) {
   return new Promise((resolve, reject) => {
     const engine = S.engines.get(engineId);
@@ -253,9 +246,8 @@ function callEngine(engineId, type, input) {
   });
 }
 
-// ==大文件分块处理 (仅用于支持流式的引擎，如 binary 编码)=====================
 async function processFile(file, engineId, mode) {
-  const CHUNK_SIZE = 64 * 1024; // 64KB
+  const CHUNK_SIZE = 64 * 1024;
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   print(`<span class="info">Processing ${file.name} (${file.size} bytes) in ${totalChunks} chunks...</span>`);
   const engine = S.engines.get(engineId);
@@ -311,7 +303,6 @@ async function processFile(file, engineId, mode) {
   });
 }
 
-// ==MODAL (文本输入)====================================================
 function showModal(title, defaultText = '') {
   return new Promise(resolve => {
     $modalTitle.textContent = title;
@@ -335,7 +326,6 @@ function showModal(title, defaultText = '') {
   });
 }
 
-// ==PAGER (分页显示)====================================================
 function showPaged(text, h = 14) {
   const lines = text.split('\n');
   const pages = Math.ceil(lines.length / h);
@@ -378,7 +368,6 @@ function closePager() {
   setPs('$');
 }
 
-// ==SELECT (交互选择列表)================================================
 function enterSelect(opts, cb, title = 'Select:') {
   S.imode = 'select';
   S.selectOpts = opts;
@@ -411,17 +400,14 @@ function handleSelectClick(e) {
 }
 $out.addEventListener('click', handleSelectClick);
 
-// ==增强的引擎验证（自检自查）============================================
 async function validateEngine(eng) {
   const testStr = 'StarBrickVII_VALIDATION_123';
   const testBinary = new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x7F, 0x80, 0xFF, 0x00, 0x0A, 0x0D, 0x20, 0x41, 0x5A, 0x61, 0x7A, 0x00]);
   try {
-    // 1. 测试编码至少产生输出
     const enc = await eng.encode(testStr);
     if (!enc.output || !enc.output.length) 
       return { ok: false, error: 'Encode produced no output' };
 
-    // 2. 如果引擎声称可逆，测试解码后匹配原始字符串
     if (eng.reversible) {
       const dec = await eng.decode(enc.output);
       if (!dec.output) return { ok: false, error: 'Decode failed' };
@@ -429,7 +415,6 @@ async function validateEngine(eng) {
       if (outStr !== testStr) return { ok: false, error: 'Reversible mismatch' };
     }
 
-    // 3. 如果引擎声称自逆，测试 encode(encode(x)) == x
     if (eng.selfInverse) {
       const enc1 = await eng.encode(testStr);
       if (!enc1.output) return { ok: false, error: 'Self-inverse encode failed' };
@@ -439,7 +424,6 @@ async function validateEngine(eng) {
       if (outStr2 !== testStr) return { ok: false, error: 'Self-inverse mismatch' };
     }
 
-    // 4. 如果引擎声称二进制安全，测试处理二进制数据
     if (eng.binarySafe) {
       const encBin = await eng.encode(testBinary);
       if (!encBin.output) return { ok: false, error: 'Binary-safe encode failed' };
@@ -461,7 +445,6 @@ async function validateEngine(eng) {
   }
 }
 
-// ==COMMANDS (内置命令)==================================================
 const cmds = {
   help() {
     print('<span class="hl">StarBrickVII</span> <span class="comment">// Encoding Toolkit</span><br>');
@@ -524,7 +507,6 @@ const cmds = {
       setPs('$');
       if (sel.value === 'view') {
         if (S.outputData instanceof Blob) {
-          // 尝试作为文本显示，但给出警告
           const reader = new FileReader();
           reader.onload = () => {
             const text = new TextDecoder().decode(reader.result);
@@ -544,7 +526,6 @@ const cmds = {
         URL.revokeObjectURL(a.href);
         print('<span class="ok">Downloaded</span>');
       } else {
-        // hex dump
         if (S.outputData instanceof Blob) {
           const reader = new FileReader();
           reader.onload = () => {
@@ -577,7 +558,6 @@ const cmds = {
   }
 };
 
-// ==选择引擎后的流程=====================================================
 async function selectEngine(id) {
   const eng = S.engines.get(id);
   if (!eng) return;
@@ -643,8 +623,9 @@ async function execute() {
       const input = new TextEncoder().encode(S.inputData).buffer;
       resultBlob = await callEngine(S.currentEngineId, S.mode, input);
     } else {
-      const nonStreamingEngines = ['hex', 'base64']; // 需要完整输入的引擎
-      if (S.mode === 'decode' && nonStreamingEngines.includes(engine.id)) {
+      const nonStreamingEngines = ['hex', 'base64'];
+      const isNonStreaming = nonStreamingEngines.includes(engine.id) || !engine.isPreset;
+      if (isNonStreaming) {
         const arrayBuffer = await S.inputData.arrayBuffer();
         resultBlob = await callEngine(S.currentEngineId, S.mode, arrayBuffer);
       } else {
@@ -652,7 +633,6 @@ async function execute() {
       }
     }
     
-    // 始终保存为 Blob，不再自动转换为文本
     S.outputData = resultBlob;
     print(`<span class="ok">${S.mode.toUpperCase()} COMPLETE</span>`);
     print(`<span class="dim">Output: ${resultBlob.size} bytes</span>`);
@@ -673,7 +653,6 @@ function reset() {
   setPs('$');
 }
 
-// ==命令行输入处理=======================================================
 function handleInput(raw) {
   const v = raw.trim();
   
@@ -736,7 +715,6 @@ function handleInput(raw) {
   clearTi();
 }
 
-// ==事件绑定============================================================
 $ti.addEventListener('keydown', e => {
   if (e.key === 'Enter') {
     handleInput($ti.value);
@@ -805,6 +783,5 @@ document.addEventListener('click', () => {
   }
 });
 
-// ==启动================================================================
 print('<span class="hl">StarBrickVII</span> <span class="comment">// Ready</span>');
 loadPresets();
