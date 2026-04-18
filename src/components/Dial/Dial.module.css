@@ -1,0 +1,241 @@
+/**
+ * Dial Component Styles
+ * 
+ * Clean, minimal styling for the round dial interface.
+ */
+
+.dial {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* Size variants */
+.compact {
+  --dial-size: 200px;
+  --inner-size: 140px;
+}
+
+.normal {
+  --dial-size: 280px;
+  --inner-size: 200px;
+}
+
+.large {
+  --dial-size: 360px;
+  --inner-size: 260px;
+}
+
+/* Outer ring */
+.outerRing {
+  position: absolute;
+  width: var(--dial-size);
+  height: var(--dial-size);
+  border-radius: 50%;
+}
+
+.ringSvg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(0deg);
+}
+
+/* Capability active animation */
+.capabilityActive {
+  filter: drop-shadow(0 0 4px var(--color-success));
+}
+
+/* Progress path animation */
+.progressPath {
+  animation: progressGlow 1.5s ease-in-out infinite;
+}
+
+@keyframes progressGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 2px var(--color-accent));
+  }
+  50% {
+    filter: drop-shadow(0 0 6px var(--color-accent));
+  }
+}
+
+/* Inner dial */
+.innerDial {
+  position: relative;
+  width: var(--inner-size);
+  height: var(--inner-size);
+  border-radius: 50%;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  box-shadow: var(--shadow-lg);
+  transition: border-color var(--transition-normal);
+}
+
+.dial.processing .innerDial {
+  border-color: var(--color-accent);
+}
+
+.dial.complete .innerDial {
+  border-color: var(--color-success);
+}
+
+.dial.error .innerDial {
+  border-color: var(--color-error);
+}
+
+/* Engine name */
+.engineName {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-fg);
+  text-align: center;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mode button */
+.modeButton {
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.modeButton:hover:not(:disabled) {
+  background: var(--color-accent-muted);
+  border-color: var(--color-accent);
+}
+
+.modeButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modeLabel {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--color-accent);
+  letter-spacing: 0.1em;
+}
+
+/* Action buttons */
+.actionButtons {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.actionBtn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-bg-hover);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.actionBtn svg {
+  width: 18px;
+  height: 18px;
+  color: var(--color-fg-muted);
+  transition: color var(--transition-fast);
+}
+
+.actionBtn:hover:not(:disabled) {
+  background: var(--color-accent-muted);
+  border-color: var(--color-accent);
+}
+
+.actionBtn:hover:not(:disabled) svg {
+  color: var(--color-accent);
+}
+
+.actionBtn.active {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.actionBtn.active svg {
+  color: var(--color-bg);
+}
+
+.actionBtn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* State indicator */
+.stateIndicator {
+  position: absolute;
+  bottom: 20%;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.loadingText {
+  color: var(--color-fg-muted);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.processingText {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.completeText {
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.errorText {
+  color: var(--color-error);
+  font-weight: 600;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .compact {
+    --dial-size: 160px;
+    --inner-size: 110px;
+  }
+  
+  .normal {
+    --dial-size: 180px;
+    --inner-size: 130px;
+  }
+  
+  .large {
+    --dial-size: 220px;
+    --inner-size: 160px;
+  }
+  
+  .engineName {
+    font-size: var(--text-xs);
+  }
+  
+  .actionBtn {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .actionBtn svg {
+    width: 14px;
+    height: 14px;
+  }
+}
