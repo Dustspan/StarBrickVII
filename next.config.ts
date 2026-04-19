@@ -16,6 +16,8 @@ const nextConfig: NextConfig = {
   
   // Use trailing slashes for GitHub Pages compatibility
   trailingSlash: true,
+
+			basePath: '/StarBrickVII',
   
   // Strict mode for better development experience
   reactStrictMode: true,
