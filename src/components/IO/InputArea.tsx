@@ -2,14 +2,22 @@
  * Input Area Component
  * 
  * Handles text input and file drop for encoding/decoding.
+ * Features clear visual feedback for drag and drop.
  */
 
 'use client';
 
 import { useState, useRef, useCallback } from 'react';
-import { formatFileSize, detectMimeType, isImageType, isTextType } from '@/lib/utils';
-import { type ProcessingMode } from '@/lib/engine/types';
+import { formatFileSize, detectMimeType, isTextType } from '@/lib/utils';
+import { type ProcessingMode, MAX_IN_MEMORY_SIZE } from '@/lib/engine/types';
 import styles from './IOArea.module.css';
+
+// Allowed file types
+const ALLOWED_FILE_TYPES = [
+  'text/plain',
+  'application/octet-stream',
+  'application/json',
+];
 
 export interface InputAreaProps {
   /** Current processing mode */
@@ -45,18 +53,27 @@ export function InputArea({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
+  /**
+   * Handles drag over event
+   */
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
   }, []);
   
+  /**
+   * Handles drag leave event
+   */
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
   }, []);
   
+  /**
+   * Handles file drop
+   */
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -65,43 +82,75 @@ export function InputArea({
     const files = e.dataTransfer.files;
     if (files.length > 0) {
       const file = files[0];
+      
+      // Check file size
+      if (file.size > MAX_IN_MEMORY_SIZE) {
+        alert(`File too large. Maximum size is ${formatFileSize(MAX_IN_MEMORY_SIZE)}`);
+        return;
+      }
+      
       setDroppedFile(file);
       onFileDrop(file);
     }
   }, [onFileDrop]);
   
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  /**
+   * Handles file input change
+   */
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       const file = files[0];
+      
+      // Check file size
+      if (file.size > MAX_IN_MEMORY_SIZE) {
+        alert(`File too large. Maximum size is ${formatFileSize(MAX_IN_MEMORY_SIZE)}`);
+        return;
+      }
+      
       setDroppedFile(file);
       onFileDrop(file);
     }
-  }, [onFileDrop]);
-  
-  const handlePaste = useCallback(async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      onInputChange(text);
-    } catch (err) {
-      console.error('Failed to read clipboard:', err);
-    }
-  }, [onInputChange]);
-  
-  const handleClear = useCallback(() => {
-    onInputChange('');
-    setDroppedFile(null);
+    
+    // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
+  }, [onFileDrop]);
+  
+  /**
+   * Handles textarea change
+   */
+  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    onInputChange(e.target.value);
+    setDroppedFile(null);
   }, [onInputChange]);
   
+  /**
+   * Handles keyboard shortcuts
+   */
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    // Ctrl/Cmd + Enter to process
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
       onProcess();
     }
   }, [onProcess]);
+  
+  /**
+   * Removes dropped file
+   */
+  const handleRemoveFile = useCallback(() => {
+    setDroppedFile(null);
+    onInputChange('');
+  }, [onInputChange]);
+  
+  /**
+   * Opens file picker
+   */
+  const handleOpenFilePicker = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
   
   return (
     <div className={styles.container}>
@@ -110,33 +159,13 @@ export function InputArea({
         <div className={styles.actions}>
           <button
             className={styles.actionBtn}
-            onClick={handlePaste}
+            onClick={handleOpenFilePicker}
             disabled={isProcessing}
-            title="Paste from clipboard"
+            title="Open file"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="9" y="9" width="13" height="13" rx="2" />
-              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
-            </svg>
-          </button>
-          <button
-            className={styles.actionBtn}
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isProcessing}
-            title="Select file"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-            </svg>
-          </button>
-          <button
-            className={styles.actionBtn}
-            onClick={handleClear}
-            disabled={isProcessing || (!value && !droppedFile)}
-            title="Clear"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 6L6 18M6 6l12 12" />
+              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+              <path d="M14 2v6h6M12 18v-6M9 15h6" />
             </svg>
           </button>
         </div>
@@ -149,31 +178,35 @@ export function InputArea({
         onDrop={handleDrop}
       >
         {droppedFile ? (
-          <FilePreview file={droppedFile} onRemove={() => setDroppedFile(null)} />
+          <FilePreview file={droppedFile} onRemove={handleRemoveFile} />
         ) : (
-          <textarea
-            ref={textareaRef}
-            className={styles.textarea}
-            value={value}
-            onChange={(e) => onInputChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={placeholder}
-            disabled={isProcessing}
-            spellCheck={false}
-          />
-        )}
-        
-        {isDragging && (
-          <div className={styles.dropOverlay}>
-            <span>Drop file here</span>
-          </div>
+          <>
+            <textarea
+              ref={textareaRef}
+              className={styles.textarea}
+              value={value}
+              onChange={handleTextareaChange}
+              onKeyDown={handleKeyDown}
+              placeholder={placeholder}
+              disabled={isProcessing}
+              spellCheck={false}
+            />
+            
+            {isDragging && (
+              <div className={styles.dropOverlay}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                <span>Drop file here</span>
+              </div>
+            )}
+          </>
         )}
       </div>
       
       <div className={styles.footer}>
-        <span className={styles.hint}>
-          {value.length > 0 ? `${value.length} chars` : 'Ctrl+Enter to process'}
-        </span>
         <button
           className={styles.processBtn}
           onClick={onProcess}
@@ -185,68 +218,64 @@ export function InputArea({
               Processing...
             </>
           ) : (
-            <>
-              {mode === 'encode' ? 'Encode' : 'Decode'}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M5 12h14M12 5l7 7-7 7" />
-              </svg>
-            </>
+            mode === 'encode' ? 'Encode' : 'Decode'
           )}
         </button>
+        
+        <span className={styles.hint}>
+          Ctrl+Enter to process
+        </span>
       </div>
       
+      {/* Hidden file input */}
       <input
         ref={fileInputRef}
         type="file"
+        accept=".txt,.json,.bin"
         className={styles.fileInput}
-        onChange={handleFileSelect}
+        onChange={handleFileInputChange}
       />
     </div>
   );
 }
 
+/**
+ * File Preview Component
+ */
 interface FilePreviewProps {
   file: File;
   onRemove: () => void;
 }
 
 function FilePreview({ file, onRemove }: FilePreviewProps) {
-  const mimeType = detectMimeType(file.name);
-  const isImage = isImageType(mimeType);
-  const isText = isTextType(mimeType);
+  const isText = isTextType(file.type) || file.name.endsWith('.txt') || file.name.endsWith('.json');
   
   return (
     <div className={styles.filePreview}>
-      <div className={styles.fileInfo}>
-        <div className={styles.fileIcon}>
-          {isImage ? (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <circle cx="8.5" cy="8.5" r="1.5" />
-              <path d="M21 15l-5-5L5 21" />
-            </svg>
-          ) : isText ? (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-              <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" />
-              <path d="M13 2v7h7" />
-            </svg>
-          )}
-        </div>
-        <div className={styles.fileDetails}>
-          <span className={styles.fileName}>{file.name}</span>
-          <span className={styles.fileSize}>{formatFileSize(file.size)}</span>
-        </div>
-        <button className={styles.removeBtn} onClick={onRemove}>
+      <div className={styles.fileIcon}>
+        {isText ? (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12" />
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
           </svg>
-        </button>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z" />
+            <path d="M13 2v7h7" />
+          </svg>
+        )}
       </div>
+      
+      <div className={styles.fileDetails}>
+        <span className={styles.fileName}>{file.name}</span>
+        <span className={styles.fileSize}>{formatFileSize(file.size)}</span>
+      </div>
+      
+      <button className={styles.removeBtn} onClick={onRemove}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
     </div>
   );
 }

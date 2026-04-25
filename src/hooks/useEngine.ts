@@ -2,6 +2,7 @@
  * useEngine Hook
  * 
  * Manages WASM engine loading, selection, and operations.
+ * Connects to real WASM engines from public/engines directory.
  */
 
 'use client';
@@ -14,8 +15,35 @@ import {
   type ProcessingState,
   type ProcessingResult,
   DEFAULT_CHUNK_SIZE,
+  MAX_IN_MEMORY_SIZE,
 } from '@/lib/engine/types';
-import { PRESET_ENGINES as PRESET_PATHS } from '@/lib/engine/protocol';
+import { PRESET_ENGINES } from '@/lib/engine/protocol';
+
+// Worker message types
+interface WorkerRequest {
+  id: string;
+  type: 'load' | 'encode' | 'decode';
+  payload: {
+    wasmUrl?: string;
+    text?: string;
+    chunk?: ArrayBuffer;
+    totalSize?: number;
+    chunkIndex?: number;
+    totalChunks?: number;
+    isLast?: boolean;
+  };
+}
+
+interface WorkerResponse {
+  id: string;
+  type: 'loaded' | 'progress' | 'result' | 'error';
+  payload?: {
+    info?: EngineInfo;
+    result?: string;
+    progress?: number;
+  };
+  error?: string;
+}
 
 interface UseEngineReturn {
   // Engine state
@@ -37,216 +65,186 @@ interface UseEngineReturn {
   // Progress
   progress: number;
   estimatedTimeRemaining: number | null;
-  
-  // Utilities
   clearError: () => void;
 }
 
-interface WorkerRequest {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-  chunks: ArrayBuffer[];
-  startTime: number;
-  inputSize: number;
+/**
+ * Creates a new Worker for engine operations
+ */
+function createEngineWorker(): Worker {
+  return new Worker(
+    new URL('../workers/engine.worker.ts', import.meta.url),
+    { type: 'module' }
+  );
 }
 
+/**
+ * useEngine Hook
+ */
 export function useEngine(): UseEngineReturn {
+  // State
   const [engines, setEngines] = useState<Map<string, Engine>>(new Map());
   const [currentEngine, setCurrentEngine] = useState<Engine | null>(null);
   const [processingState, setProcessingState] = useState<ProcessingState>('idle');
-  const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
   const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null);
   
-  const nextRequestId = useRef(0);
-  const pendingRequests = useRef<Map<number, WorkerRequest>>(new Map());
+  // Refs
   const workersRef = useRef<Map<string, Worker>>(new Map());
-  
-  /**
-   * Creates a worker for an engine
-   */
-  const createWorker = useCallback((engineId: string): Worker => {
-    const worker = new Worker(
-      new URL('../workers/engine.worker.ts', import.meta.url),
-      { type: 'module' }
-    );
-    
-    worker.onmessage = (event) => {
-      const { id, type, payload, error: err } = event.data;
-      const request = pendingRequests.current.get(id);
-      
-      if (!request) return;
-      
-      if (type === 'error') {
-        request.reject(new Error(err || 'Unknown error'));
-        pendingRequests.current.delete(id);
-        return;
-      }
-      
-      if (type === 'chunk' && payload) {
-        request.chunks.push(payload);
-      }
-      
-      if (type === 'progress' && payload) {
-        const elapsed = Date.now() - request.startTime;
-        const progressValue = payload.current / payload.total;
-        setProgress(progressValue);
-        
-        if (progressValue > 0) {
-          const remaining = Math.round(elapsed / progressValue - elapsed);
-          setEstimatedTimeRemaining(remaining);
-        }
-      }
-      
-      if (type === 'result') {
-        // Combine all chunks
-        const totalSize = request.chunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
-        const result = new Uint8Array(totalSize);
-        let offset = 0;
-        for (const chunk of request.chunks) {
-          result.set(new Uint8Array(chunk), offset);
-          offset += chunk.byteLength;
-        }
-        
-        const duration = Date.now() - request.startTime;
-        const blob = new Blob([result]);
-        
-        request.resolve({
-          data: blob,
-          inputSize: request.inputSize,
-          outputSize: blob.size,
-          duration,
-        });
-        
-        pendingRequests.current.delete(id);
-      }
-    };
-    
-    worker.onerror = (event) => {
-      console.error('Worker error:', event);
-    };
-    
-    workersRef.current.set(engineId, worker);
-    return worker;
-  }, []);
+  const pendingRequestsRef = useRef<Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+    timeout: ReturnType<typeof setTimeout>;
+  }>>(new Map());
   
   /**
    * Sends a message to a worker and waits for response
    */
-  const sendWorkerMessage = useCallback(<T = unknown>(
+  const sendWorkerMessage = useCallback(async <T = unknown>(
     engineId: string,
-    type: 'load' | 'encode' | 'decode' | 'validate',
-    payload: unknown,
-    inputSize = 0
+    type: 'load' | 'encode' | 'decode',
+    payload: WorkerRequest['payload'],
+    onProgress?: (progress: number) => void
   ): Promise<T> => {
     return new Promise((resolve, reject) => {
       let worker = workersRef.current.get(engineId);
       
-      if (!worker && type === 'load') {
-        worker = createWorker(engineId);
-      }
-      
       if (!worker) {
-        reject(new Error('Worker not found'));
-        return;
+        worker = createEngineWorker();
+        workersRef.current.set(engineId, worker);
       }
       
-      const id = nextRequestId.current++;
+      const requestId = `${engineId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       
-      pendingRequests.current.set(id, {
+      // Set 30 second timeout
+      const timeout = setTimeout(() => {
+        pendingRequestsRef.current.delete(requestId);
+        reject(new Error('Operation timed out'));
+      }, 30000);
+      
+      pendingRequestsRef.current.set(requestId, {
         resolve: resolve as (value: unknown) => void,
         reject,
-        chunks: [],
-        startTime: Date.now(),
-        inputSize,
+        timeout,
       });
       
-      worker.postMessage({ id, type, payload }, 
-        type === 'encode' || type === 'decode' 
-          ? [(payload as { chunk: ArrayBuffer }).chunk] 
-          : []
-      );
+      const handleMessage = (event: MessageEvent<WorkerResponse>) => {
+        const response = event.data;
+        
+        if (response.id !== requestId) return;
+        
+        if (response.type === 'progress' && onProgress) {
+          onProgress(response.payload?.progress || 0);
+          return;
+        }
+        
+        worker!.removeEventListener('message', handleMessage);
+        clearTimeout(timeout);
+        pendingRequestsRef.current.delete(requestId);
+        
+        if (response.type === 'error') {
+          reject(new Error(response.error || 'Unknown error'));
+        } else {
+          resolve(response.payload as T);
+        }
+      };
+      
+      worker.addEventListener('message', handleMessage);
+      
+      const message: WorkerRequest = {
+        id: requestId,
+        type,
+        payload,
+      };
+      
+      worker.postMessage(message);
     });
-  }, [createWorker]);
+  }, []);
   
   /**
-   * Loads preset engines
+   * Loads all preset engines from public/engines
    */
   const loadPresetEngines = useCallback(async (): Promise<void> => {
     setProcessingState('loading');
     setError(null);
     
-    const newEngines = new Map(engines);
+    const newEngines = new Map<string, Engine>();
     
-    for (const path of PRESET_PATHS) {
-      try {
-        const info = await sendWorkerMessage<EngineInfo & { warnings?: string[] }>(
-          path,
-          'load',
-          { wasmUrl: path }
-        );
-        
-        const engine: Engine = {
-          ...info,
-          isPreset: true,
-          worker: workersRef.current.get(path)!,
-        };
-        
-        newEngines.set(engine.id, engine);
-      } catch (err) {
-        console.error(`Failed to load preset engine ${path}:`, err);
+    try {
+      for (const wasmPath of PRESET_ENGINES) {
+        try {
+          const engineId = wasmPath.split('/').pop()?.replace('.wasm', '') || 'unknown';
+          
+          // Create a worker for this engine
+          const worker = createEngineWorker();
+          workersRef.current.set(engineId, worker);
+          
+          // Load the engine
+          const result = await sendWorkerMessage<{ info: EngineInfo }>(
+            engineId,
+            'load',
+            { wasmUrl: wasmPath }
+          );
+          
+          const engine: Engine = {
+            ...result.info,
+            isPreset: true,
+            worker,
+          };
+          
+          newEngines.set(engineId, engine);
+        } catch (err) {
+          console.error(`Failed to load engine ${wasmPath}:`, err);
+        }
       }
+      
+      setEngines(newEngines);
+      setProcessingState('idle');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load engines';
+      setError(message);
+      setProcessingState('error');
     }
-    
-    setEngines(newEngines);
-    setProcessingState('idle');
-  }, [engines, sendWorkerMessage]);
+  }, [sendWorkerMessage]);
   
   /**
    * Loads a custom engine from URL or File
    */
-  const loadCustomEngine = useCallback(async (
-    urlOrFile: string | File
-  ): Promise<EngineInfo | null> => {
+  const loadCustomEngine = useCallback(async (source: string | File): Promise<EngineInfo | null> => {
     setProcessingState('loading');
     setError(null);
     
     try {
-      let wasmUrl: string;
-      let cleanup: (() => void) | null = null;
-      
-      if (typeof urlOrFile === 'string') {
-        wasmUrl = urlOrFile;
-      } else {
-        wasmUrl = URL.createObjectURL(urlOrFile);
-        cleanup = () => URL.revokeObjectURL(wasmUrl);
-      }
-      
       const engineId = `custom-${Date.now()}`;
-      const info = await sendWorkerMessage<EngineInfo>(
+      const wasmUrl = typeof source === 'string' ? source : URL.createObjectURL(source);
+      
+      // Create a worker for this engine
+      const worker = createEngineWorker();
+      workersRef.current.set(engineId, worker);
+      
+      const result = await sendWorkerMessage<{ info: EngineInfo }>(
         engineId,
         'load',
         { wasmUrl }
       );
       
       const engine: Engine = {
-        ...info,
+        ...result.info,
         isPreset: false,
-        worker: workersRef.current.get(engineId)!,
+        worker,
       };
       
       setEngines((prev) => {
-        const newMap = new Map(prev);
-        newMap.set(engine.id, engine);
-        return newMap;
+        const newEngines = new Map(prev);
+        newEngines.set(engineId, engine);
+        return newEngines;
       });
       
-      cleanup?.();
       setProcessingState('idle');
-      
-      return info;
+      return result.info;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load engine';
+      const message = err instanceof Error ? err.message : 'Failed to load custom engine';
       setError(message);
       setProcessingState('error');
       return null;
@@ -254,7 +252,7 @@ export function useEngine(): UseEngineReturn {
   }, [sendWorkerMessage]);
   
   /**
-   * Selects an engine
+   * Selects an engine by ID
    */
   const selectEngine = useCallback((id: string): void => {
     const engine = engines.get(id);
@@ -265,7 +263,7 @@ export function useEngine(): UseEngineReturn {
   }, [engines]);
   
   /**
-   * Unloads an engine
+   * Unloads an engine by ID
    */
   const unloadEngine = useCallback((id: string): void => {
     const worker = workersRef.current.get(id);
@@ -275,9 +273,9 @@ export function useEngine(): UseEngineReturn {
     }
     
     setEngines((prev) => {
-      const newMap = new Map(prev);
-      newMap.delete(id);
-      return newMap;
+      const newEngines = new Map(prev);
+      newEngines.delete(id);
+      return newEngines;
     });
     
     if (currentEngine?.id === id) {
@@ -286,7 +284,7 @@ export function useEngine(): UseEngineReturn {
   }, [currentEngine]);
   
   /**
-   * Processes text input
+   * Processes text using the current engine
    */
   const processText = useCallback(async (
     text: string,
@@ -299,22 +297,29 @@ export function useEngine(): UseEngineReturn {
     
     setProcessingState('processing');
     setProgress(0);
-    setEstimatedTimeRemaining(null);
     setError(null);
     
+    const startTime = Date.now();
+    
     try {
-      const input = new TextEncoder().encode(text);
-      const result = await sendWorkerMessage<ProcessingResult>(
+      const result = await sendWorkerMessage<{ result: string }>(
         currentEngine.id,
         mode,
-        { chunk: input.buffer, isLast: true },
-        input.length
+        { text },
+        (p) => setProgress(p)
       );
+      
+      const duration = Date.now() - startTime;
       
       setProcessingState('complete');
       setProgress(1);
       
-      return result;
+      return {
+        data: new Blob([result.result], { type: 'text/plain' }),
+        inputSize: new TextEncoder().encode(text).length,
+        outputSize: result.result.length,
+        duration,
+      };
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Processing failed';
       setError(message);
@@ -324,7 +329,7 @@ export function useEngine(): UseEngineReturn {
   }, [currentEngine, sendWorkerMessage]);
   
   /**
-   * Processes a file
+   * Processes a file using the current engine
    */
   const processFile = useCallback(async (
     file: File,
@@ -335,59 +340,53 @@ export function useEngine(): UseEngineReturn {
       return null;
     }
     
+    if (file.size > MAX_IN_MEMORY_SIZE) {
+      setError(`File too large. Maximum size is ${MAX_IN_MEMORY_SIZE / 1024 / 1024}MB`);
+      return null;
+    }
+    
     setProcessingState('processing');
     setProgress(0);
-    setEstimatedTimeRemaining(null);
     setError(null);
     
+    const startTime = Date.now();
+    
     try {
-      const totalChunks = Math.ceil(file.size / DEFAULT_CHUNK_SIZE);
-      const resultChunks: ArrayBuffer[] = [];
-      const startTime = Date.now();
+      const arrayBuffer = await file.arrayBuffer();
+      const totalChunks = Math.ceil(arrayBuffer.byteLength / DEFAULT_CHUNK_SIZE);
+      
+      let result = '';
       
       for (let i = 0; i < totalChunks; i++) {
         const start = i * DEFAULT_CHUNK_SIZE;
-        const end = Math.min(start + DEFAULT_CHUNK_SIZE, file.size);
-        const chunk = file.slice(start, end);
-        const buffer = await chunk.arrayBuffer();
+        const end = Math.min(start + DEFAULT_CHUNK_SIZE, arrayBuffer.byteLength);
+        const chunk = arrayBuffer.slice(start, end);
         
-        const result = await sendWorkerMessage<ArrayBuffer>(
+        const chunkResult = await sendWorkerMessage<{ result: string }>(
           currentEngine.id,
           mode,
           {
-            chunk: buffer,
-            isLast: i === totalChunks - 1,
-            totalChunks,
+            chunk,
+            totalSize: arrayBuffer.byteLength,
             chunkIndex: i,
+            totalChunks,
+            isLast: i === totalChunks - 1,
           },
-          file.size
+          (p) => setProgress((i + p) / totalChunks)
         );
         
-        if (result) {
-          resultChunks.push(result);
-        }
-        
-        setProgress((i + 1) / totalChunks);
-      }
-      
-      // Combine results
-      const totalSize = resultChunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
-      const output = new Uint8Array(totalSize);
-      let offset = 0;
-      for (const chunk of resultChunks) {
-        output.set(new Uint8Array(chunk), offset);
-        offset += chunk.byteLength;
+        result += chunkResult.result;
       }
       
       const duration = Date.now() - startTime;
-      const blob = new Blob([output]);
       
       setProcessingState('complete');
+      setProgress(1);
       
       return {
-        data: blob,
+        data: new Blob([result], { type: 'text/plain' }),
         inputSize: file.size,
-        outputSize: blob.size,
+        outputSize: result.length,
         duration,
       };
     } catch (err) {
@@ -432,3 +431,5 @@ export function useEngine(): UseEngineReturn {
     clearError,
   };
 }
+
+export default useEngine;

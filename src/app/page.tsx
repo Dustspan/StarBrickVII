@@ -2,176 +2,163 @@
  * StarBrickVII Main Page
  * 
  * The main application page featuring the round dial interface.
+ * Uses real WASM engines for encoding/decoding.
  */
 
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { Dial } from '@/components/Dial/Dial';
 import { EngineSelector } from '@/components/Engine/EngineSelector';
 import { InputArea } from '@/components/IO/InputArea';
 import { OutputArea } from '@/components/IO/OutputArea';
 import { ProcessingProgress } from '@/components/Progress/ProcessingProgress';
 import { useResponsive, useReducedMotion } from '@/hooks/useResponsive';
-import { type Engine, type ProcessingMode, type ProcessingResult } from '@/lib/engine/types';
+import { useEngine } from '@/hooks/useEngine';
+import { type ProcessingMode, type ProcessingResult, MAX_IN_MEMORY_SIZE } from '@/lib/engine/types';
 import styles from './page.module.css';
 
-// Mock engine data for demonstration
-const MOCK_ENGINES: Engine[] = [
-  {
-    id: 'base64',
-    name: 'Base64',
-    desc: 'Standard Base64 encoding and decoding',
-    capabilities: {
-      binarySafe: true,
-      selfInverse: false,
-      reversible: true,
-      stateful: false,
-    },
-    isPreset: true,
-  },
-  {
-    id: 'hex',
-    name: 'Hexadecimal',
-    desc: 'Hexadecimal encoding and decoding',
-    capabilities: {
-      binarySafe: true,
-      selfInverse: false,
-      reversible: true,
-      stateful: false,
-    },
-    isPreset: true,
-  },
-  {
-    id: 'binary',
-    name: 'Binary',
-    desc: 'Binary string representation',
-    capabilities: {
-      binarySafe: true,
-      selfInverse: false,
-      reversible: true,
-      stateful: false,
-    },
-    isPreset: true,
-  },
+// Allowed file types
+const ALLOWED_FILE_TYPES = [
+  'text/plain',
+  'application/octet-stream',
+  'application/json',
 ];
 
+/**
+ * Main Page Component
+ */
 export default function HomePage() {
-  const { isMobile } = useResponsive();
-  useReducedMotion();
+  // Hooks
+  const { isMobile, isTablet } = useResponsive();
+  const prefersReducedMotion = useReducedMotion();
   
-  // State
-  const [engines] = useState<Map<string, Engine>>(() => {
-    const map = new Map();
-    MOCK_ENGINES.forEach((e) => map.set(e.id, e));
-    return map;
-  });
-  const [currentEngine, setCurrentEngine] = useState<Engine | null>(null);
+  // Engine state from hook
+  const {
+    engines,
+    currentEngine,
+    processingState,
+    error,
+    loadPresetEngines,
+    loadCustomEngine,
+    selectEngine,
+    processText,
+    processFile,
+    progress,
+    estimatedTimeRemaining,
+    clearError,
+  } = useEngine();
+  
+  // Local state
   const [mode, setMode] = useState<ProcessingMode>('encode');
-  const [processingState, setProcessingState] = useState<'idle' | 'loading' | 'processing' | 'complete' | 'error'>('idle');
-  const [progress, setProgress] = useState(0);
-  const [inputValue, setInputValue] = useState('');
+  const [inputText, setInputText] = useState('');
   const [inputFile, setInputFile] = useState<File | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   
+  // Refs
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // Handlers
-  const handleEngineSelect = useCallback((id: string) => {
-    const engine = engines.get(id);
-    setCurrentEngine(engine || null);
-    setResult(null);
-    setError(null);
-  }, [engines]);
+  // Load preset engines on mount
+  useEffect(() => {
+    loadPresetEngines();
+  }, [loadPresetEngines]);
   
+  /**
+   * Handles engine selection
+   */
+  const handleEngineSelect = useCallback((id: string) => {
+    selectEngine(id);
+    setResult(null);
+  }, [selectEngine]);
+  
+  /**
+   * Handles custom engine file selection
+   */
+  const handleCustomEngineFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      await loadCustomEngine(file);
+    }
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [loadCustomEngine]);
+  
+  /**
+   * Handles file drop
+   */
+  const handleFileDrop = useCallback((file: File) => {
+    // Check file size
+    if (file.size > MAX_IN_MEMORY_SIZE) {
+      clearError();
+      return;
+    }
+    
+    // Check file type (allow all for now, as browsers may not report correct MIME)
+    setInputFile(file);
+    setInputText('');
+    setResult(null);
+  }, [clearError]);
+  
+  /**
+   * Handles input text change
+   */
+  const handleInputChange = useCallback((text: string) => {
+    setInputText(text);
+    setInputFile(null);
+    setResult(null);
+  }, []);
+  
+  /**
+   * Handles process action
+   */
+  const handleProcess = useCallback(async () => {
+    if (!currentEngine) return;
+    
+    clearError();
+    setResult(null);
+    
+    let newResult: ProcessingResult | null = null;
+    
+    if (inputFile) {
+      newResult = await processFile(inputFile, mode);
+    } else if (inputText) {
+      newResult = await processText(inputText, mode);
+    }
+    
+    if (newResult) {
+      setResult(newResult);
+    }
+  }, [currentEngine, inputFile, inputText, mode, processFile, processText, clearError]);
+  
+  /**
+   * Handles mode toggle
+   */
+  const handleModeToggle = useCallback(() => {
+    setMode((prev) => (prev === 'encode' ? 'decode' : 'encode'));
+    setResult(null);
+  }, []);
+  
+  /**
+   * Handles cancel action
+   */
+  const handleCancel = useCallback(() => {
+    // Reset processing state
+    clearError();
+  }, [clearError]);
+  
+  /**
+   * Triggers custom engine file input
+   */
   const handleLoadCustomEngine = useCallback(() => {
     fileInputRef.current?.click();
   }, []);
   
-  const handleCustomEngineFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    // TODO: Load and validate custom engine
-    // eslint-disable-next-line no-console
-    console.log('Loading custom engine:', file.name);
-    e.target.value = '';
-  }, []);
-  
-  const handleModeToggle = useCallback(() => {
-    setMode((prev) => (prev === 'encode' ? 'decode' : 'encode'));
-  }, []);
-  
-  const handleInputChange = useCallback((text: string) => {
-    setInputValue(text);
-    setInputFile(null);
-    setResult(null);
-    setError(null);
-  }, []);
-  
-  const handleFileDrop = useCallback((file: File) => {
-    setInputFile(file);
-    setInputValue('');
-    setResult(null);
-    setError(null);
-  }, []);
-  
-  const handleProcess = useCallback(async () => {
-    if (!currentEngine) {
-      setError('Please select an engine');
-      return;
-    }
-    
-    if (!inputValue && !inputFile) {
-      setError('Please enter text or drop a file');
-      return;
-    }
-    
-    setProcessingState('processing');
-    setProgress(0);
-    setError(null);
-    
-    try {
-      // Simulate processing
-      for (let i = 0; i <= 100; i += 10) {
-        await new Promise((r) => setTimeout(r, 100));
-        setProgress(i / 100);
-      }
-      
-      // Mock result
-      const outputText = mode === 'encode' 
-        ? btoa(inputValue || 'test input')
-        : atob(inputValue || 'dGVzdCBpbnB1dA==');
-      
-      setResult({
-        data: new Blob([outputText]),
-        inputSize: inputValue?.length || 0,
-        outputSize: outputText.length,
-        duration: 1000,
-      });
-      
-      setProcessingState('complete');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Processing failed');
-      setProcessingState('error');
-    }
-  }, [currentEngine, inputValue, inputFile, mode]);
-  
-  const handleEncode = useCallback(() => {
-    setMode('encode');
-    handleProcess();
-  }, [handleProcess]);
-  
-  const handleDecode = useCallback(() => {
-    if (!currentEngine?.capabilities.reversible) {
-      setError('This engine does not support decoding');
-      return;
-    }
-    setMode('decode');
-    handleProcess();
-  }, [currentEngine, handleProcess]);
+  // Determine if process button should be enabled
+  const canProcess = currentEngine && (inputText || inputFile) && processingState !== 'processing';
   
   return (
     <div className={styles.container}>
@@ -180,9 +167,9 @@ export default function HomePage() {
       
       {/* Main layout */}
       <div className={`${styles.main} ${sidebarCollapsed ? styles.sidebarCollapsed : ''}`}>
-        {/* Sidebar */}
+        {/* Sidebar - Engine selector (desktop only) */}
         {!isMobile && (
-          <aside className={`${styles.sidebar} ${sidebarCollapsed ? styles.collapsed : ''}`}>
+          <div className={`${styles.sidebar} ${sidebarCollapsed ? styles.collapsed : ''}`}>
             <EngineSelector
               engines={engines}
               currentEngine={currentEngine}
@@ -190,16 +177,23 @@ export default function HomePage() {
               onLoadCustom={handleLoadCustomEngine}
               isLoading={processingState === 'loading'}
             />
+            
             <button
               className={styles.collapseBtn}
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
               aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d={sidebarCollapsed ? 'M9 18l6-6-6-6' : 'M15 18l-6-6 6-6'} />
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                style={{ transform: sidebarCollapsed ? 'rotate(180deg)' : 'none' }}
+              >
+                <path d="M15 18l-6-6 6-6" />
               </svg>
             </button>
-          </aside>
+          </div>
         )}
         
         {/* Center - Dial */}
@@ -210,20 +204,27 @@ export default function HomePage() {
             state={processingState}
             progress={progress}
             onModeToggle={handleModeToggle}
-            onEncode={handleEncode}
-            onDecode={handleDecode}
+            onEncode={mode === 'encode' ? handleProcess : undefined}
+            onDecode={mode === 'decode' ? handleProcess : undefined}
             size={isMobile ? 'compact' : 'normal'}
           />
           
-          {/* Progress */}
+          {/* Progress bar */}
           <ProcessingProgress
             progress={progress}
-            estimatedTimeRemaining={null}
+            estimatedTimeRemaining={estimatedTimeRemaining}
             isActive={processingState === 'processing'}
           />
+          
+          {/* Cancel button */}
+          {processingState === 'processing' && (
+            <button className={styles.cancelBtn} onClick={handleCancel}>
+              Cancel
+            </button>
+          )}
         </div>
         
-        {/* Right panel - IO */}
+        {/* IO Panel */}
         <div className={styles.ioPanel}>
           <InputArea
             mode={mode}
@@ -231,8 +232,10 @@ export default function HomePage() {
             onInputChange={handleInputChange}
             onFileDrop={handleFileDrop}
             onProcess={handleProcess}
-            value={inputValue}
+            value={inputText}
+            placeholder={mode === 'encode' ? 'Enter text to encode...' : 'Enter text to decode...'}
           />
+          
           <OutputArea
             result={result}
             isProcessing={processingState === 'processing'}
