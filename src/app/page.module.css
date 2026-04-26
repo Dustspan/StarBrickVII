@@ -29,6 +29,22 @@
     radial-gradient(ellipse at 80% 80%, rgba(180, 83, 9, 0.03) 0%, transparent 50%);
 }
 
+/* Scanlines overlay */
+.scanlines {
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.1) 2px,
+    rgba(0, 0, 0, 0.1) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.3;
+}
+
 /* Header */
 .header {
   display: flex;
