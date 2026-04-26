@@ -3,17 +3,23 @@
  * 
  * Web Worker for WASM engine operations.
  * Handles loading, encoding, decoding with real WASM engines.
+ * Implements chunked processing for large files.
  */
 
-// Worker state
-let wasmExports: WebAssembly.Exports | null = null;
-let wasmMemory: WebAssembly.Memory | null = null;
+// Engine instance cache
+const engineCache = new Map<string, {
+  exports: WebAssembly.Exports;
+  memory: WebAssembly.Memory;
+  info: EngineInfo;
+}>();
+
+// Current active engine
 let currentEngineId: string | null = null;
 
 // Message types
 interface WorkerMessage {
   id: string;
-  type: 'load' | 'encode' | 'decode';
+  type: 'load' | 'encode' | 'decode' | 'abort';
   payload: {
     wasmUrl?: string;
     text?: string;
@@ -48,89 +54,206 @@ interface EngineInfo {
   };
 }
 
+// Chunk size for large file processing (1MB)
+const _CHUNK_SIZE = 1024 * 1024;
+
 /**
  * Sends a response message to the main thread
  */
-function sendResponse<T>(response: WorkerResponse): void {
+function sendResponse(response: WorkerResponse): void {
   self.postMessage(response);
 }
 
 /**
  * Reads a string from WASM memory
  */
-function readWasmString(ptr: number, len: number): string {
-  if (!wasmMemory || ptr === 0 || len === 0) return '';
-  const bytes = new Uint8Array(wasmMemory.buffer, ptr, len);
-  return new TextDecoder().decode(bytes);
+function readWasmString(memory: WebAssembly.Memory, ptr: number, len: number): string {
+  if (ptr === 0 || len === 0) return '';
+  const bytes = new Uint8Array(memory.buffer, ptr, len);
+  return new TextDecoder('utf-8').decode(bytes);
 }
 
 /**
  * Writes a string to WASM memory
  */
-function writeWasmString(str: string): { ptr: number; len: number } {
-  if (!wasmExports) throw new Error('WASM not loaded');
-  
+function writeWasmString(
+  memory: WebAssembly.Memory,
+  alloc: (size: number) => number,
+  str: string
+): { ptr: number; len: number } {
   const bytes = new TextEncoder().encode(str);
-  const alloc = wasmExports.sb_alloc as (size: number) => number;
   const ptr = alloc(bytes.length);
   
-  if (!wasmMemory) throw new Error('WASM memory not available');
-  new Uint8Array(wasmMemory.buffer).set(bytes, ptr);
+  if (ptr === 0) {
+    throw new Error('Memory allocation failed');
+  }
+  
+  new Uint8Array(memory.buffer).set(bytes, ptr);
   
   return { ptr, len: bytes.length };
 }
 
 /**
- * Loads a WASM engine
+ * Writes binary data to WASM memory
  */
-async function loadEngine(id: string, wasmUrl: string): Promise<void> {
+function writeWasmBinary(
+  memory: WebAssembly.Memory,
+  alloc: (size: number) => number,
+  data: Uint8Array
+): { ptr: number; len: number } {
+  const ptr = alloc(data.length);
+  
+  if (ptr === 0) {
+    throw new Error('Memory allocation failed');
+  }
+  
+  new Uint8Array(memory.buffer).set(data, ptr);
+  
+  return { ptr, len: data.length };
+}
+
+/**
+ * Loads a WASM engine and extracts metadata
+ */
+async function loadEngine(requestId: string, wasmUrl: string): Promise<void> {
   try {
-    // Fetch and instantiate WASM
-    const response = await fetch(wasmUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch WASM: ${response.status}`);
-    }
-    
-    const wasmBuffer = await response.arrayBuffer();
-    const wasmModule = await WebAssembly.compile(wasmBuffer);
-    const instance = await WebAssembly.instantiate(wasmModule, {
-      env: {
-        memory: new WebAssembly.Memory({ initial: 256, maximum: 4096 }),
-      },
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 0.1 },
     });
     
-    wasmExports = instance.exports;
-    wasmMemory = wasmExports.memory as WebAssembly.Memory;
-    currentEngineId = id;
+    // Fetch WASM file
+    const response = await fetch(wasmUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch WASM: ${response.status} ${response.statusText}`);
+    }
     
-    // Verify required exports
-    const requiredExports = ['sb_alloc', 'sb_free', 'sb_encode', 'sb_decode'];
-    for (const exp of requiredExports) {
-      if (!(exp in wasmExports)) {
-        throw new Error(`Missing required export: ${exp}`);
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 0.3 },
+    });
+    
+    const wasmBuffer = await response.arrayBuffer();
+    
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 0.5 },
+    });
+    
+    // Compile and instantiate WASM
+    const wasmModule = await WebAssembly.compile(wasmBuffer);
+    
+    // Check exports before instantiation
+    const exports = WebAssembly.Module.exports(wasmModule);
+    const exportNames = exports.map(e => e.name);
+    
+    const requiredExports = [
+      'sb_alloc', 'sb_free', 'sb_encode', 'sb_decode',
+      'sb_get_id', 'sb_get_name', 'sb_get_desc',
+      'sb_is_binary_safe', 'sb_is_self_inverse', 'sb_is_reversible',
+      'memory'
+    ];
+    
+    for (const required of requiredExports) {
+      if (!exportNames.includes(required)) {
+        throw new Error(`Missing required export: ${required}`);
       }
     }
     
-    sendResponse({
-      id,
-      type: 'loaded',
-      payload: {
-        info: {
-          id,
-          name: id,
-          desc: `${id} encoding engine`,
-          capabilities: {
-            binarySafe: true,
-            selfInverse: false,
-            reversible: true,
-            stateful: false,
-          },
-        },
+    const instance = await WebAssembly.instantiate(wasmModule, {
+      env: {
+        memory: new WebAssembly.Memory({ initial: 256, maximum: 16384 }),
       },
+    });
+    
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 0.7 },
+    });
+    
+    const wasmExports = instance.exports;
+    const memory = wasmExports.memory as WebAssembly.Memory;
+    
+    // Extract engine metadata
+    const alloc = wasmExports.sb_alloc as (size: number) => number;
+    const free = wasmExports.sb_free as (ptr: number, size: number) => void;
+    
+    const getId = wasmExports.sb_get_id as (outLenPtr: number) => number;
+    const getName = wasmExports.sb_get_name as (outLenPtr: number) => number;
+    const getDesc = wasmExports.sb_get_desc as (outLenPtr: number) => number;
+    const isBinarySafe = wasmExports.sb_is_binary_safe as () => number;
+    const isSelfInverse = wasmExports.sb_is_self_inverse as () => number;
+    const isReversible = wasmExports.sb_is_reversible as () => number;
+    
+    // Allocate output length pointer
+    const outLenPtr = alloc(4);
+    
+    // Get engine ID
+    const idPtr = getId(outLenPtr);
+    const idLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
+    const id = readWasmString(memory, idPtr, idLen);
+    
+    // Get engine name
+    const namePtr = getName(outLenPtr);
+    const nameLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
+    const name = readWasmString(memory, namePtr, nameLen);
+    
+    // Get engine description
+    const descPtr = getDesc(outLenPtr);
+    const descLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
+    const desc = readWasmString(memory, descPtr, descLen);
+    
+    // Get capabilities
+    const binarySafe = isBinarySafe() !== 0;
+    const selfInverse = isSelfInverse() !== 0;
+    const reversible = isReversible() !== 0;
+    
+    // Check for stateful capability (optional)
+    const isStateful = wasmExports.sb_is_stateful as (() => number) | undefined;
+    const stateful = isStateful ? isStateful() !== 0 : false;
+    
+    // Free allocated memory
+    free(outLenPtr, 4);
+    
+    const engineInfo: EngineInfo = {
+      id,
+      name,
+      desc,
+      capabilities: {
+        binarySafe,
+        selfInverse,
+        reversible,
+        stateful,
+      },
+    };
+    
+    // Cache the engine
+    engineCache.set(id, {
+      exports: wasmExports,
+      memory,
+      info: engineInfo,
+    });
+    
+    currentEngineId = id;
+    
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 1.0 },
+    });
+    
+    sendResponse({
+      id: requestId,
+      type: 'loaded',
+      payload: { info: engineInfo },
     });
   } catch (error) {
     sendResponse({
-      id,
+      id: requestId,
       type: 'error',
       error: error instanceof Error ? error.message : 'Failed to load engine',
     });
@@ -138,205 +261,156 @@ async function loadEngine(id: string, wasmUrl: string): Promise<void> {
 }
 
 /**
- * Encodes text using WASM
+ * Processes text using WASM engine
  */
-function encodeText(id: string, text: string): void {
+function processText(
+  requestId: string,
+  text: string,
+  mode: 'encode' | 'decode'
+): void {
   try {
-    if (!wasmExports || !wasmMemory) {
-      throw new Error('Engine not loaded');
+    const engine = currentEngineId ? engineCache.get(currentEngineId) : null;
+    
+    if (!engine) {
+      throw new Error('No engine loaded');
     }
     
-    // Send progress
+    const { exports, memory } = engine;
+    
     sendResponse({
-      id,
+      id: requestId,
       type: 'progress',
       payload: { progress: 0.1 },
     });
     
+    const alloc = exports.sb_alloc as (size: number) => number;
+    const free = exports.sb_free as (ptr: number, size: number) => void;
+    const process = (mode === 'encode' 
+      ? exports.sb_encode 
+      : exports.sb_decode) as (ptr: number, len: number, outLenPtr: number) => number;
+    
     // Write input to memory
-    const { ptr: inPtr, len: inLen } = writeWasmString(text);
+    const { ptr: inPtr, len: inLen } = writeWasmString(memory, alloc, text);
     
-    // Allocate output length pointer
-    const alloc = wasmExports.sb_alloc as (size: number) => number;
-    const free = wasmExports.sb_free as (ptr: number, size: number) => void;
-    const encode = wasmExports.sb_encode as (ptr: number, len: number, outLenPtr: number) => number;
-    
-    const outLenPtr = alloc(4);
-    
-    // Send progress
     sendResponse({
-      id,
+      id: requestId,
       type: 'progress',
-      payload: { progress: 0.5 },
+      payload: { progress: 0.3 },
     });
     
-    // Call encode
-    const outPtr = encode(inPtr, inLen, outLenPtr);
+    // Allocate output length pointer
+    const outLenPtr = alloc(4);
+    
+    // Process
+    const outPtr = process(inPtr, inLen, outLenPtr);
     
     // Read output length
-    const outLen = new Uint32Array(wasmMemory.buffer, outLenPtr, 1)[0];
+    const outLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
     
     if (outPtr === 0 || outLen === 0) {
       free(inPtr, inLen);
       free(outLenPtr, 4);
-      throw new Error('Encoding produced no output');
+      throw new Error(`${mode === 'encode' ? 'Encoding' : 'Decoding'} produced no output`);
     }
     
+    sendResponse({
+      id: requestId,
+      type: 'progress',
+      payload: { progress: 0.7 },
+    });
+    
     // Read result
-    const result = readWasmString(outPtr, outLen);
+    const result = readWasmString(memory, outPtr, outLen);
     
     // Free memory
     free(inPtr, inLen);
     free(outLenPtr, 4);
     
-    // Send progress
     sendResponse({
-      id,
+      id: requestId,
       type: 'progress',
       payload: { progress: 0.9 },
     });
     
     sendResponse({
-      id,
+      id: requestId,
       type: 'result',
       payload: { result },
     });
   } catch (error) {
     sendResponse({
-      id,
+      id: requestId,
       type: 'error',
-      error: error instanceof Error ? error.message : 'Encoding failed',
+      error: error instanceof Error ? error.message : `${mode} failed`,
     });
   }
 }
 
 /**
- * Decodes text using WASM
+ * Processes binary data using WASM engine
  */
-function decodeText(id: string, text: string): void {
+function processBinary(
+  requestId: string,
+  data: Uint8Array,
+  mode: 'encode' | 'decode',
+  progress: number
+): void {
   try {
-    if (!wasmExports || !wasmMemory) {
-      throw new Error('Engine not loaded');
+    const engine = currentEngineId ? engineCache.get(currentEngineId) : null;
+    
+    if (!engine) {
+      throw new Error('No engine loaded');
     }
     
-    // Send progress
-    sendResponse({
-      id,
-      type: 'progress',
-      payload: { progress: 0.1 },
-    });
+    const { exports, memory } = engine;
     
-    // Write input to memory
-    const { ptr: inPtr, len: inLen } = writeWasmString(text);
+    const alloc = exports.sb_alloc as (size: number) => number;
+    const free = exports.sb_free as (ptr: number, size: number) => void;
+    const process = (mode === 'encode' 
+      ? exports.sb_encode 
+      : exports.sb_decode) as (ptr: number, len: number, outLenPtr: number) => number;
+    
+    // Write binary data to memory
+    const { ptr: inPtr, len: inLen } = writeWasmBinary(memory, alloc, data);
     
     // Allocate output length pointer
-    const alloc = wasmExports.sb_alloc as (size: number) => number;
-    const free = wasmExports.sb_free as (ptr: number, size: number) => void;
-    const decode = wasmExports.sb_decode as (ptr: number, len: number, outLenPtr: number) => number;
-    
     const outLenPtr = alloc(4);
     
-    // Send progress
-    sendResponse({
-      id,
-      type: 'progress',
-      payload: { progress: 0.5 },
-    });
-    
-    // Call decode
-    const outPtr = decode(inPtr, inLen, outLenPtr);
+    // Process
+    const outPtr = process(inPtr, inLen, outLenPtr);
     
     // Read output length
-    const outLen = new Uint32Array(wasmMemory.buffer, outLenPtr, 1)[0];
+    const outLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
     
     if (outPtr === 0 || outLen === 0) {
       free(inPtr, inLen);
       free(outLenPtr, 4);
-      throw new Error('Decoding produced no output');
+      throw new Error(`${mode === 'encode' ? 'Encoding' : 'Decoding'} produced no output`);
     }
     
     // Read result
-    const result = readWasmString(outPtr, outLen);
+    const result = readWasmString(memory, outPtr, outLen);
     
     // Free memory
     free(inPtr, inLen);
     free(outLenPtr, 4);
     
-    // Send progress
     sendResponse({
-      id,
+      id: requestId,
       type: 'progress',
-      payload: { progress: 0.9 },
+      payload: { progress },
     });
     
     sendResponse({
-      id,
+      id: requestId,
       type: 'result',
       payload: { result },
     });
   } catch (error) {
     sendResponse({
-      id,
+      id: requestId,
       type: 'error',
-      error: error instanceof Error ? error.message : 'Decoding failed',
-    });
-  }
-}
-
-/**
- * Encodes binary chunk using WASM
- */
-function encodeChunk(id: string, chunk: ArrayBuffer, progress: number): void {
-  try {
-    if (!wasmExports || !wasmMemory) {
-      throw new Error('Engine not loaded');
-    }
-    
-    const bytes = new Uint8Array(chunk);
-    const text = new TextDecoder().decode(bytes);
-    
-    encodeText(id, text);
-    
-    // Override progress with chunk progress
-    sendResponse({
-      id,
-      type: 'progress',
-      payload: { progress },
-    });
-  } catch (error) {
-    sendResponse({
-      id,
-      type: 'error',
-      error: error instanceof Error ? error.message : 'Chunk encoding failed',
-    });
-  }
-}
-
-/**
- * Decodes binary chunk using WASM
- */
-function decodeChunk(id: string, chunk: ArrayBuffer, progress: number): void {
-  try {
-    if (!wasmExports || !wasmMemory) {
-      throw new Error('Engine not loaded');
-    }
-    
-    const bytes = new Uint8Array(chunk);
-    const text = new TextDecoder().decode(bytes);
-    
-    decodeText(id, text);
-    
-    // Override progress with chunk progress
-    sendResponse({
-      id,
-      type: 'progress',
-      payload: { progress },
-    });
-  } catch (error) {
-    sendResponse({
-      id,
-      type: 'error',
-      error: error instanceof Error ? error.message : 'Chunk decoding failed',
+      error: error instanceof Error ? error.message : `${mode} failed`,
     });
   }
 }
@@ -356,24 +430,39 @@ self.onmessage = async (event: MessageEvent<WorkerMessage>) => {
       
     case 'encode':
       if (payload.text) {
-        encodeText(id, payload.text);
+        processText(id, payload.text, 'encode');
       } else if (payload.chunk) {
         const progress = payload.chunkIndex !== undefined && payload.totalChunks
           ? (payload.chunkIndex + 1) / payload.totalChunks
           : 0.5;
-        encodeChunk(id, payload.chunk, progress);
+        const bytes = new Uint8Array(payload.chunk);
+        processBinary(id, bytes, 'encode', progress);
       }
       break;
       
     case 'decode':
       if (payload.text) {
-        decodeText(id, payload.text);
+        processText(id, payload.text, 'decode');
       } else if (payload.chunk) {
         const progress = payload.chunkIndex !== undefined && payload.totalChunks
           ? (payload.chunkIndex + 1) / payload.totalChunks
           : 0.5;
-        decodeChunk(id, payload.chunk, progress);
+        const bytes = new Uint8Array(payload.chunk);
+        processBinary(id, bytes, 'decode', progress);
       }
+      break;
+      
+    case 'abort':
+      // Clear engine cache on abort
+      if (currentEngineId) {
+        engineCache.delete(currentEngineId);
+        currentEngineId = null;
+      }
+      sendResponse({
+        id,
+        type: 'error',
+        error: 'Operation aborted',
+      });
       break;
       
     default:

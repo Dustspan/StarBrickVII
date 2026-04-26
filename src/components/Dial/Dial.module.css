@@ -5,25 +5,59 @@
  * Features metal gradients, glow effects, and smooth animations.
  */
 
-.dial {
+.dialContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* Mode toggle switch */
+.modeSwitch {
   position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  user-select: none;
-  cursor: grab;
-  outline: none;
-  transition: transform 0.2s ease;
+  background: #18181b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 
-.dial:focus {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 4px;
-  border-radius: 50%;
+.modeOption {
+  position: relative;
+  z-index: 1;
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  color: #71717a;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: color 0.3s ease;
 }
 
-.dial:active {
-  cursor: grabbing;
+.modeOption.active {
+  color: #f97316;
+}
+
+.modeOption:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.modeSlider {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  width: calc(50% - 4px);
+  height: calc(100% - 8px);
+  background: linear-gradient(180deg, #27272a 0%, #18181b 100%);
+  border: 1px solid #f97316;
+  border-radius: 6px;
+  box-shadow: 0 0 10px rgba(249, 115, 22, 0.3);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 /* Size variants */
@@ -42,242 +76,241 @@
   --inner-size: 260px;
 }
 
-/* Outer ring - metal gradient background */
-.outerRing {
-  position: absolute;
+/* Dial */
+.dial {
+  position: relative;
   width: var(--dial-size);
   height: var(--dial-size);
   border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    #1a1a1a 0deg,
-    #2d2d2d 30deg,
-    #1a1a1a 60deg,
-    #2d2d2d 90deg,
-    #1a1a1a 120deg,
-    #2d2d2d 150deg,
-    #1a1a1a 180deg,
-    #2d2d2d 210deg,
-    #1a1a1a 240deg,
-    #2d2d2d 270deg,
-    #1a1a1a 300deg,
-    #2d2d2d 330deg,
-    #1a1a1a 360deg
-  );
+  cursor: grab;
+  user-select: none;
+  outline: none;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
   box-shadow: 
-    inset 0 4px 6px rgba(0, 0, 0, 0.6),
-    inset 0 -2px 4px rgba(255, 255, 255, 0.05),
-    0 0 20px rgba(249, 115, 34, 0.3),
-    0 4px 12px rgba(0, 0, 0, 0.5);
-  transition: box-shadow 0.3s ease;
+    0 0 0 4px #18181b,
+    0 0 0 6px #27272a,
+    0 0 20px rgba(0, 0, 0, 0.5),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
 }
 
-/* Dragging state - enhanced glow */
-.dragging .outerRing {
+.dial:focus {
+  outline: 2px solid #f97316;
+  outline-offset: 4px;
+}
+
+.dial:active,
+.dial.dragging {
+  cursor: grabbing;
   box-shadow: 
-    inset 0 4px 6px rgba(0, 0, 0, 0.6),
-    inset 0 -2px 4px rgba(255, 255, 255, 0.05),
-    0 0 30px rgba(249, 115, 34, 0.5),
-    0 0 60px rgba(249, 115, 34, 0.3),
-    0 4px 12px rgba(0, 0, 0, 0.5);
+    0 0 0 4px #18181b,
+    0 0 0 6px #f97316,
+    0 0 25px rgba(249, 115, 22, 0.5),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
 }
 
-.dragging {
-  filter: drop-shadow(0 0 30px rgba(249, 115, 34, 0.6));
+.dial.snapping {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* Sector SVG */
-.sectorSvg {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  transform: rotate(0deg);
-}
-
-.sectorArc {
-  transition: opacity 0.2s ease, stroke-width 0.2s ease;
-  filter: drop-shadow(0 0 4px currentColor);
-}
-
-.sectorArc.selected {
-  stroke-width: 10;
-  filter: drop-shadow(0 0 8px currentColor);
-}
-
-/* Engine labels around the dial */
+/* Engine labels */
 .engineLabel {
   position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-top: calc(var(--dial-size) / -2);
+  margin-left: calc(var(--dial-size) / -2);
+  width: var(--dial-size);
+  height: var(--dial-size);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 20px;
   font-family: 'Courier New', monospace;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  color: var(--color-fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  transition: all 0.2s ease;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px currentColor;
+  transition: color 0.3s ease, text-shadow 0.3s ease;
   pointer-events: none;
 }
 
 .engineLabel.active {
-  color: var(--color-accent);
-  text-shadow: 0 0 8px rgba(249, 115, 34, 0.8);
-  font-size: 11px;
+  font-size: 13px;
+  text-shadow: 0 0 15px currentColor;
 }
 
-/* Inner rotating disc */
-.innerDisc {
+/* Center button */
+.centerButton {
   position: absolute;
-  width: calc(var(--dial-size) * 0.75);
-  height: calc(var(--dial-size) * 0.75);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 30% 30%,
-    #3a3a3a 0%,
-    #1a1a1a 50%,
-    #0a0a0a 100%
-  );
-  box-shadow: 
-    inset 0 2px 4px rgba(255, 255, 255, 0.1),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.5);
-  transition: transform 0.1s ease-out;
-}
-
-/* Finger stop indicator */
-.fingerStop {
-  position: absolute;
-  top: 8px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
-  width: 20px;
-  height: 8px;
-  background: linear-gradient(180deg, #f97316 0%, #c2410c 100%);
-  border-radius: 2px;
-  box-shadow: 0 0 8px rgba(249, 115, 34, 0.6);
+  transform: translate(-50%, -50%);
+  width: var(--inner-size);
+  height: var(--inner-size);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #2d2d2d 0%, #1a1a1a 50%, #0d0d0d 100%);
+  border: 3px solid #3d3d3d;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.1),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: box-shadow 0.3s ease;
 }
 
-/* Center display area */
-.center {
-  position: absolute;
+.dial.dragging .centerButton,
+.dial.snapping .centerButton {
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.5),
+    0 0 20px rgba(249, 115, 22, 0.4),
+    inset 0 2px 4px rgba(255, 255, 255, 0.1),
+    inset 0 -2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.centerInner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  width: calc(var(--dial-size) * 0.5);
-  height: calc(var(--dial-size) * 0.5);
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 50% 50%,
-    #18181b 0%,
-    #09090b 100%
-  );
-  box-shadow: 
-    inset 0 2px 4px rgba(0, 0, 0, 0.8),
-    0 0 1px rgba(255, 255, 255, 0.1);
+  gap: 4px;
 }
 
-/* Engine name in center */
 .engineName {
   font-family: 'Courier New', monospace;
-  font-size: var(--text-sm);
+  font-size: 14px;
   font-weight: 700;
-  color: #fff;
-  text-shadow: 0 0 10px rgba(249, 115, 34, 0.8);
-  text-align: center;
-  max-width: 80%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Mode button */
-.modeBtn {
-  padding: 2px 8px;
-  font-family: 'Courier New', monospace;
-  font-size: var(--text-xs);
-  font-weight: 600;
-  color: var(--color-accent);
-  background: transparent;
-  border: 1px solid var(--color-accent);
-  border-radius: 2px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.modeBtn:hover:not(:disabled) {
-  background: var(--color-accent-muted);
-  box-shadow: 0 0 8px rgba(249, 115, 34, 0.5);
-}
-
-.modeBtn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* Action buttons */
-.actionButtons {
-  display: flex;
-  gap: var(--space-1);
-}
-
-.actionBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: linear-gradient(180deg, #27272a 0%, #18181b 100%);
-  border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.actionBtn svg {
-  width: 16px;
-  height: 16px;
-  color: var(--color-accent);
-}
-
-.actionBtn:hover:not(:disabled) {
-  background: linear-gradient(180deg, #3f3f46 0%, #27272a 100%);
-  border-color: var(--color-accent);
-  box-shadow: 0 0 12px rgba(249, 115, 34, 0.5);
-}
-
-.actionBtn:disabled {
-  opacity: 0.3;
-  cursor: not-allowed;
-}
-
-/* State indicator */
-.stateIndicator {
-  position: absolute;
-  bottom: 20%;
-  font-family: 'Courier New', monospace;
-  font-size: var(--text-xs);
+  color: #f97316;
+  text-shadow: 0 0 10px rgba(249, 115, 22, 0.6);
+  letter-spacing: 1px;
 }
 
 .loadingText {
-  color: var(--color-fg-muted);
-  animation: pulse 1.5s ease-in-out infinite;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  color: #71717a;
+  animation: pulse 1s ease-in-out infinite;
 }
 
 .processingText {
-  color: var(--color-accent);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #22c55e;
   font-weight: 600;
-  text-shadow: 0 0 8px rgba(249, 115, 34, 0.6);
+  text-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
 }
 
 .completeText {
-  color: var(--color-success);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #22c55e;
   font-weight: 600;
   text-shadow: 0 0 8px rgba(34, 197, 94, 0.6);
 }
 
 .errorText {
-  color: var(--color-error);
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+  color: #ef4444;
   font-weight: 600;
   text-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+}
+
+/* Action buttons */
+.actionButtons {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.callBtn,
+.hangupBtn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 24px;
+  border-radius: 50%;
+  border: 2px solid;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.callBtn {
+  background: linear-gradient(180deg, #166534 0%, #14532d 100%);
+  border-color: #22c55e;
+  color: #22c55e;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    0 0 15px rgba(34, 197, 94, 0.3),
+    inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.callBtn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 6px 12px rgba(0, 0, 0, 0.4),
+    0 0 25px rgba(34, 197, 94, 0.5),
+    inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.callBtn:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 0 10px rgba(34, 197, 94, 0.3),
+    inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.callBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.callBtn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.hangupBtn {
+  background: linear-gradient(180deg, #991b1b 0%, #7f1d1d 100%);
+  border-color: #ef4444;
+  color: #ef4444;
+  box-shadow: 
+    0 4px 8px rgba(0, 0, 0, 0.3),
+    0 0 15px rgba(239, 68, 68, 0.3),
+    inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.hangupBtn:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 6px 12px rgba(0, 0, 0, 0.4),
+    0 0 25px rgba(239, 68, 68, 0.5),
+    inset 0 1px 2px rgba(255, 255, 255, 0.1);
+}
+
+.hangupBtn:active {
+  transform: translateY(1px);
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 0 10px rgba(239, 68, 68, 0.3),
+    inset 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.hangupBtn svg {
+  width: 24px;
+  height: 24px;
+}
+
+.hidden {
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
 }
 
 /* Pulse animation */
@@ -304,25 +337,32 @@
   }
   
   .engineName {
-    font-size: var(--text-xs);
+    font-size: 11px;
   }
   
   .engineLabel {
-    font-size: 8px;
+    font-size: 9px;
+    padding-top: 15px;
   }
   
   .engineLabel.active {
-    font-size: 9px;
+    font-size: 10px;
   }
   
-  .actionBtn {
-    width: 28px;
-    height: 28px;
+  .callBtn,
+  .hangupBtn {
+    padding: 10px 20px;
   }
   
-  .actionBtn svg {
-    width: 14px;
-    height: 14px;
+  .callBtn svg,
+  .hangupBtn svg {
+    width: 20px;
+    height: 20px;
+  }
+  
+  .modeOption {
+    padding: 6px 12px;
+    font-size: 10px;
   }
 }
 

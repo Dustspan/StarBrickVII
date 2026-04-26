@@ -2,11 +2,12 @@
  * Output Area Component
  * 
  * Displays processing results with preview and download options.
+ * Styled as a vintage electronic display screen.
  */
 
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { formatFileSize, formatDuration, downloadBlob, copyToClipboard, hexDump } from '@/lib/utils';
 import { type ProcessingResult } from '@/lib/engine/types';
 import styles from './IOArea.module.css';
@@ -41,122 +42,115 @@ export function OutputArea({
     hex: string;
     size: number;
     duration: number;
-  }> | null => {
-    if (!result) return null;
+  } | null> => {
+    if (!result?.data) return Promise.resolve(null);
     
-    return result.data.text().then((text) => ({
-      text,
-      hex: hexDump(new Uint8Array(result.data.size)),
-      size: result.data.size,
-      duration: result.duration,
-    }));
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = reader.result as string;
+        resolve({
+          text,
+          hex: hexDump(new TextEncoder().encode(text)),
+          size: result.outputSize,
+          duration: result.duration,
+        });
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsText(result.data);
+    });
   }, [result]);
   
-  const handleCopy = async () => {
-    if (!result) return;
+  const handleCopy = useCallback(async () => {
+    if (!result?.data) return;
     
-    try {
-      const text = await result.data.text();
-      await copyToClipboard(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
-  
-  const handleDownload = () => {
-    if (!result) return;
+    const text = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsText(result.data);
+    });
     
-    const ext = previewMode === 'hex' ? 'hex' : 'txt';
-    downloadBlob(result.data, `${filename}.${ext}`);
-  };
+    await copyToClipboard(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [result]);
   
-  if (error) {
+  const handleDownload = useCallback(() => {
+    if (!result?.data) return;
+    downloadBlob(result.data, `${filename}.txt`);
+  }, [result, filename]);
+  
+  // Empty state
+  if (!result && !isProcessing && !error) {
     return (
       <div className={styles.container}>
         <div className={styles.header}>
-          <span className={styles.label}>Output</span>
+          <span className={styles.label}>OUTPUT</span>
         </div>
-        <div className={`${styles.outputWrapper} ${styles.error}`}>
-          <div className={styles.errorContent}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M15 9l-6 6M9 9l6 6" />
+        <div className={styles.outputWrapper}>
+          <div className={styles.emptyState}>
+            <svg className={styles.emptyIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+              <line x1="8" y1="21" x2="16" y2="21" />
+              <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
-            <span>{error}</span>
+            <span className={styles.emptyText}>
+              Output will appear here after processing
+            </span>
           </div>
         </div>
       </div>
     );
   }
   
+  // Processing state
   if (isProcessing) {
     return (
       <div className={styles.container}>
         <div className={styles.header}>
-          <span className={styles.label}>Output</span>
+          <span className={styles.label}>OUTPUT</span>
         </div>
-        <div className={`${styles.outputWrapper} ${styles.processing}`}>
-          <div className={styles.processingContent}>
-            <span className={styles.spinner} />
-            <span>Processing...</span>
+        <div className={styles.outputWrapper}>
+          <div className={styles.processingState}>
+            <div className={styles.spinner} />
+            <span className={styles.processingText}>Processing...</span>
           </div>
         </div>
       </div>
     );
   }
   
-  if (!result) {
+  // Error state
+  if (error) {
     return (
       <div className={styles.container}>
         <div className={styles.header}>
-          <span className={styles.label}>Output</span>
+          <span className={styles.label}>OUTPUT</span>
         </div>
-        <div className={`${styles.outputWrapper} ${styles.empty}`}>
-          <span className={styles.emptyText}>No output yet</span>
+        <div className={styles.outputWrapper}>
+          <div className={styles.errorState}>
+            <svg className={styles.errorIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span className={styles.errorText}>{error}</span>
+          </div>
         </div>
       </div>
     );
+  }
+  
+  // Result state
+  if (!result) {
+    return null;
   }
   
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <span className={styles.label}>Output</span>
+        <span className={styles.label}>OUTPUT</span>
         <div className={styles.actions}>
-          <div className={styles.previewModes}>
-            <button
-              className={`${styles.modeBtn} ${previewMode === 'preview' ? styles.active : ''}`}
-              onClick={() => setPreviewMode('preview')}
-              title="Preview"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-            </button>
-            <button
-              className={`${styles.modeBtn} ${previewMode === 'text' ? styles.active : ''}`}
-              onClick={() => setPreviewMode('text')}
-              title="Text view"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
-              </svg>
-            </button>
-            <button
-              className={`${styles.modeBtn} ${previewMode === 'hex' ? styles.active : ''}`}
-              onClick={() => setPreviewMode('hex')}
-              title="Hex view"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="3" y="3" width="18" height="18" rx="2" />
-                <path d="M3 9h18M3 15h18M9 3v18M15 3v18" />
-              </svg>
-            </button>
-          </div>
           <button
             className={styles.actionBtn}
             onClick={handleCopy}
@@ -164,11 +158,11 @@ export function OutputArea({
           >
             {copied ? (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M20 6L9 17l-5-5" />
+                <polyline points="20 6 9 17 4 12" />
               </svg>
             ) : (
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" />
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                 <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
               </svg>
             )}
@@ -179,52 +173,85 @@ export function OutputArea({
             title="Download"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
             </svg>
           </button>
         </div>
       </div>
       
       <div className={styles.outputWrapper}>
-        <OutputContent
-          result={result}
-          previewMode={previewMode}
-          previewDataPromise={previewData}
-        />
-      </div>
-      
-      <div className={styles.footer}>
-        <div className={styles.stats}>
-          <span>{formatFileSize(result.outputSize)}</span>
-          <span className={styles.statSeparator}>•</span>
-          <span>{formatDuration(result.duration)}</span>
-          {result.inputSize !== result.outputSize && (
-            <>
+        <div className={styles.resultContainer}>
+          {/* Preview tabs */}
+          <div className={styles.previewTabs}>
+            <button
+              className={`${styles.previewTab} ${previewMode === 'preview' ? styles.active : ''}`}
+              onClick={() => setPreviewMode('preview')}
+            >
+              Preview
+            </button>
+            <button
+              className={`${styles.previewTab} ${previewMode === 'text' ? styles.active : ''}`}
+              onClick={() => setPreviewMode('text')}
+            >
+              Text
+            </button>
+            <button
+              className={`${styles.previewTab} ${previewMode === 'hex' ? styles.active : ''}`}
+              onClick={() => setPreviewMode('hex')}
+            >
+              Hex
+            </button>
+          </div>
+          
+          {/* Content */}
+          <OutputContent
+            previewMode={previewMode}
+            previewDataPromise={previewData}
+            result={result}
+          />
+          
+          {/* Stats */}
+          <div className={styles.resultActions}>
+            <div className={styles.resultStats}>
+              <span>{formatFileSize(result.outputSize)}</span>
               <span className={styles.statSeparator}>•</span>
-              <span className={result.outputSize > result.inputSize ? styles.larger : styles.smaller}>
-                {result.outputSize > result.inputSize ? '+' : ''}
-                {Math.round(((result.outputSize - result.inputSize) / result.inputSize) * 100)}%
-              </span>
-            </>
-          )}
+              <span>{formatDuration(result.duration)}</span>
+              {result.outputSize > result.inputSize ? (
+                <span className={styles.larger}>
+                  (+{Math.round((result.outputSize / result.inputSize - 1) * 100)}%)
+                </span>
+              ) : (
+                <span className={styles.smaller}>
+                  (-{Math.round((1 - result.outputSize / result.inputSize) * 100)}%)
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-interface OutputContentProps {
-  result: ProcessingResult;
+/**
+ * Output content component
+ */
+function OutputContent({
+  previewMode,
+  previewDataPromise,
+  result,
+}: {
   previewMode: PreviewMode;
   previewDataPromise: Promise<{
     text: string;
     hex: string;
     size: number;
     duration: number;
-  }> | null;
-}
-
-function OutputContent({ result, previewMode, previewDataPromise }: OutputContentProps) {
+  } | null>;
+  result: ProcessingResult | null;
+}) {
   const [data, setData] = useState<{ text: string; hex: string } | null>(null);
   
   // Load preview data
@@ -255,7 +282,7 @@ function OutputContent({ result, previewMode, previewDataPromise }: OutputConten
     <div className={styles.previewContent}>
       <pre className={styles.outputText}>
         {data?.text?.slice(0, 1000) || 'Loading...'}
-        {(data?.text?.length || 0) > 1000 && (
+        {(data?.text?.length || 0) > 1000 && result && (
           <span className={styles.truncated}>
             {'\n'}... truncated ({formatFileSize(result.outputSize)} total)
           </span>

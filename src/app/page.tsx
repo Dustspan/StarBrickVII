@@ -1,37 +1,28 @@
 /**
  * StarBrickVII Main Page
  * 
- * The main application page featuring the round dial interface.
+ * The main application page featuring the vintage telephone dial interface.
  * Uses real WASM engines for encoding/decoding.
  */
 
 'use client';
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Dial } from '@/components/Dial/Dial';
-import { EngineSelector } from '@/components/Engine/EngineSelector';
 import { InputArea } from '@/components/IO/InputArea';
 import { OutputArea } from '@/components/IO/OutputArea';
 import { ProcessingProgress } from '@/components/Progress/ProcessingProgress';
-import { useResponsive, useReducedMotion } from '@/hooks/useResponsive';
+import { useResponsive } from '@/hooks/useResponsive';
 import { useEngine } from '@/hooks/useEngine';
 import { type ProcessingMode, type ProcessingResult, MAX_IN_MEMORY_SIZE } from '@/lib/engine/types';
 import styles from './page.module.css';
-
-// Allowed file types
-const ALLOWED_FILE_TYPES = [
-  'text/plain',
-  'application/octet-stream',
-  'application/json',
-];
 
 /**
  * Main Page Component
  */
 export default function HomePage() {
   // Hooks
-  const { isMobile, isTablet } = useResponsive();
-  const prefersReducedMotion = useReducedMotion();
+  const { isMobile } = useResponsive();
   
   // Engine state from hook
   const {
@@ -40,13 +31,13 @@ export default function HomePage() {
     processingState,
     error,
     loadPresetEngines,
-    loadCustomEngine,
     selectEngine,
     processText,
     processFile,
     progress,
     estimatedTimeRemaining,
     clearError,
+    abort,
   } = useEngine();
   
   // Local state
@@ -54,10 +45,6 @@ export default function HomePage() {
   const [inputText, setInputText] = useState('');
   const [inputFile, setInputFile] = useState<File | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  
-  // Refs
-  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Load preset engines on mount
   useEffect(() => {
@@ -65,27 +52,12 @@ export default function HomePage() {
   }, [loadPresetEngines]);
   
   /**
-   * Handles engine selection
+   * Handles engine selection from dial
    */
   const handleEngineSelect = useCallback((id: string) => {
     selectEngine(id);
     setResult(null);
   }, [selectEngine]);
-  
-  /**
-   * Handles custom engine file selection
-   */
-  const handleCustomEngineFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      await loadCustomEngine(file);
-    }
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  }, [loadCustomEngine]);
   
   /**
    * Handles file drop
@@ -97,7 +69,6 @@ export default function HomePage() {
       return;
     }
     
-    // Check file type (allow all for now, as browsers may not report correct MIME)
     setInputFile(file);
     setInputText('');
     setResult(null);
@@ -113,7 +84,7 @@ export default function HomePage() {
   }, []);
   
   /**
-   * Handles process action
+   * Handles process action (CALL button)
    */
   const handleProcess = useCallback(async () => {
     if (!currentEngine) return;
@@ -143,69 +114,56 @@ export default function HomePage() {
   }, []);
   
   /**
-   * Handles cancel action
+   * Handles hang up (abort)
    */
-  const handleCancel = useCallback(() => {
-    // Reset processing state
-    clearError();
-  }, [clearError]);
-  
-  /**
-   * Triggers custom engine file input
-   */
-  const handleLoadCustomEngine = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const handleHangUp = useCallback(() => {
+    abort();
+    setResult(null);
+  }, [abort]);
   
   // Determine if process button should be enabled
   const canProcess = currentEngine && (inputText || inputFile) && processingState !== 'processing';
+  const isProcessing = processingState === 'processing';
+  
+  // Get engine list for dial
+  const engineList = Array.from(engines.values());
   
   return (
     <div className={styles.container}>
-      {/* Background */}
-      <div className={styles.background} />
+      {/* Background with scanlines */}
+      <div className={styles.background}>
+        <div className={styles.scanlines} />
+      </div>
       
       {/* Main layout */}
-      <div className={`${styles.main} ${sidebarCollapsed ? styles.sidebarCollapsed : ''}`}>
-        {/* Sidebar - Engine selector (desktop only) */}
-        {!isMobile && (
-          <div className={`${styles.sidebar} ${sidebarCollapsed ? styles.collapsed : ''}`}>
-            <EngineSelector
-              engines={engines}
-              currentEngine={currentEngine}
-              onSelect={handleEngineSelect}
-              onLoadCustom={handleLoadCustomEngine}
-              isLoading={processingState === 'loading'}
-            />
-            
-            <button
-              className={styles.collapseBtn}
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                style={{ transform: sidebarCollapsed ? 'rotate(180deg)' : 'none' }}
-              >
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
-            </button>
-          </div>
-        )}
+      <div className={styles.main}>
+        {/* Left panel - Input */}
+        <div className={styles.inputPanel}>
+          <InputArea
+            mode={mode}
+            isProcessing={isProcessing}
+            onInputChange={handleInputChange}
+            onFileDrop={handleFileDrop}
+            onProcess={handleProcess}
+            value={inputText}
+            placeholder={mode === 'encode' ? 'Enter text to encode...' : 'Enter text to decode...'}
+          />
+        </div>
         
         {/* Center - Dial */}
-        <div className={styles.center}>
+        <div className={styles.centerPanel}>
           <Dial
-            engine={currentEngine}
+            engines={engineList}
+            currentEngine={currentEngine}
             mode={mode}
             state={processingState}
             progress={progress}
+            canProcess={!!canProcess}
+            isProcessing={isProcessing}
+            onEngineSelect={handleEngineSelect}
             onModeToggle={handleModeToggle}
-            onEncode={mode === 'encode' ? handleProcess : undefined}
-            onDecode={mode === 'decode' ? handleProcess : undefined}
+            onProcess={handleProcess}
+            onHangUp={handleHangUp}
             size={isMobile ? 'compact' : 'normal'}
           />
           
@@ -213,32 +171,15 @@ export default function HomePage() {
           <ProcessingProgress
             progress={progress}
             estimatedTimeRemaining={estimatedTimeRemaining}
-            isActive={processingState === 'processing'}
+            isActive={isProcessing}
           />
-          
-          {/* Cancel button */}
-          {processingState === 'processing' && (
-            <button className={styles.cancelBtn} onClick={handleCancel}>
-              Cancel
-            </button>
-          )}
         </div>
         
-        {/* IO Panel */}
-        <div className={styles.ioPanel}>
-          <InputArea
-            mode={mode}
-            isProcessing={processingState === 'processing'}
-            onInputChange={handleInputChange}
-            onFileDrop={handleFileDrop}
-            onProcess={handleProcess}
-            value={inputText}
-            placeholder={mode === 'encode' ? 'Enter text to encode...' : 'Enter text to decode...'}
-          />
-          
+        {/* Right panel - Output */}
+        <div className={styles.outputPanel}>
           <OutputArea
             result={result}
-            isProcessing={processingState === 'processing'}
+            isProcessing={isProcessing}
             error={error}
             filename={`output-${mode === 'encode' ? 'encoded' : 'decoded'}`}
           />
@@ -254,7 +195,7 @@ export default function HomePage() {
             onChange={(e) => handleEngineSelect(e.target.value)}
           >
             <option value="">Select Engine</option>
-            {Array.from(engines.values()).map((engine) => (
+            {engineList.map((engine) => (
               <option key={engine.id} value={engine.id}>
                 {engine.name}
               </option>
@@ -262,15 +203,6 @@ export default function HomePage() {
           </select>
         </div>
       )}
-      
-      {/* Hidden file input for custom engine */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".wasm"
-        className={styles.hiddenInput}
-        onChange={handleCustomEngineFile}
-      />
     </div>
   );
 }

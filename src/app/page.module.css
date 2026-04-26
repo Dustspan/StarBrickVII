@@ -1,5 +1,7 @@
 /**
  * Main Page Styles
+ * 
+ * Vintage telephone layout with modern tech aesthetics.
  */
 
 .container {
@@ -15,7 +17,7 @@
   position: fixed;
   inset: 0;
   background: var(--color-bg);
-  z-index: -1;
+  z-index: -2;
 }
 
 .background::before {
@@ -23,88 +25,76 @@
   position: absolute;
   inset: 0;
   background: 
-    radial-gradient(ellipse at 20% 20%, rgba(249, 115, 22, 0.03) 0%, transparent 50%),
-    radial-gradient(ellipse at 80% 80%, rgba(249, 115, 22, 0.02) 0%, transparent 50%);
+    radial-gradient(ellipse at 20% 20%, rgba(249, 115, 22, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(180, 83, 9, 0.03) 0%, transparent 50%);
 }
 
-/* Main layout */
+/* Header */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(180deg, var(--color-bg-elevated) 0%, var(--color-bg) 100%);
+}
+
+.title {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-accent);
+  text-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+  letter-spacing: 2px;
+}
+
+.title span {
+  color: var(--color-fg);
+  text-shadow: none;
+}
+
+/* Main layout - Telephone style */
 .main {
   flex: 1;
   display: grid;
-  grid-template-columns: 280px 1fr 1fr;
+  grid-template-columns: 1fr auto 1fr;
   gap: var(--space-6);
   padding: var(--space-6);
-  max-width: 1600px;
+  max-width: 1400px;
   margin: 0 auto;
   width: 100%;
-  transition: grid-template-columns var(--transition-normal);
+  align-items: start;
 }
 
-.main.sidebarCollapsed {
-  grid-template-columns: 60px 1fr 1fr;
-}
-
-/* Sidebar */
-.sidebar {
-  position: relative;
+/* Input panel - Left handset cradle */
+.inputPanel {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  transition: width var(--transition-normal);
+  height: 100%;
 }
 
-.sidebar.collapsed {
-  width: 60px;
-}
-
-.collapseBtn {
-  position: absolute;
-  top: 50%;
-  right: -12px;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
+/* Center panel - Dial */
+.centerPanel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: linear-gradient(180deg, var(--color-bg-elevated) 0%, var(--color-bg) 100%);
   border: 1px solid var(--color-border);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transform: translateY(-50%);
-  z-index: 10;
-  transition: all var(--transition-fast);
+  border-radius: var(--radius-xl);
+  box-shadow: 
+    var(--shadow-lg),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
-.collapseBtn svg {
-  width: 12px;
-  height: 12px;
-  color: var(--color-fg-muted);
-}
-
-.collapseBtn:hover {
-  background: var(--color-accent-muted);
-  border-color: var(--color-accent);
-}
-
-.collapseBtn:hover svg {
-  color: var(--color-accent);
-}
-
-/* Center - Dial */
-.center {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-6);
-}
-
-/* IO Panel */
-.ioPanel {
+/* Output panel - Right display */
+.outputPanel {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  min-width: 0;
+  height: 100%;
 }
 
 /* Mobile engine bar */
@@ -116,11 +106,12 @@
   padding: var(--space-3);
   background: var(--color-bg-elevated);
   border-top: 1px solid var(--color-border);
-  z-index: 100;
+  display: flex;
+  gap: var(--space-2);
 }
 
 .mobileEngineSelect {
-  width: 100%;
+  flex: 1;
   padding: var(--space-2) var(--space-3);
   background: var(--color-bg-surface);
   border: 1px solid var(--color-border);
@@ -138,41 +129,54 @@
 /* Responsive */
 @media (max-width: 1200px) {
   .main {
-    grid-template-columns: 240px 1fr 1fr;
-  }
-  
-  .main.sidebarCollapsed {
-    grid-template-columns: 60px 1fr 1fr;
+    grid-template-columns: 1fr auto 1fr;
+    gap: var(--space-4);
+    padding: var(--space-4);
   }
 }
 
 @media (max-width: 1024px) {
   .main {
     grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
     gap: var(--space-4);
     padding: var(--space-4);
   }
   
-  .sidebar {
-    display: none;
+  .centerPanel {
+    grid-column: 1 / -1;
+    order: -1;
   }
 }
 
 @media (max-width: 768px) {
   .main {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
-    gap: var(--space-4);
+    grid-template-rows: auto auto auto;
+    gap: var(--space-3);
     padding: var(--space-3);
     padding-bottom: 80px;
   }
   
-  .center {
+  .centerPanel {
     order: 1;
+    padding: var(--space-4);
   }
   
-  .ioPanel {
+  .inputPanel {
     order: 2;
+  }
+  
+  .outputPanel {
+    order: 3;
+  }
+  
+  .header {
+    padding: var(--space-3);
+  }
+  
+  .title {
+    font-size: var(--text-base);
   }
 }
 
@@ -180,5 +184,9 @@
   .main {
     padding: var(--space-2);
     padding-bottom: 80px;
+  }
+  
+  .centerPanel {
+    padding: var(--space-3);
   }
 }

@@ -32,6 +32,8 @@ export interface InputAreaProps {
   onProcess: () => void;
   /** Current input value */
   value?: string;
+  /** Current file */
+  file?: File | null;
   /** Placeholder text */
   placeholder?: string;
 }
@@ -46,122 +48,89 @@ export function InputArea({
   onFileDrop,
   onProcess,
   value = '',
-  placeholder = 'Enter text or drop a file...',
+  file,
+  placeholder,
 }: InputAreaProps) {
   const [isDragging, setIsDragging] = useState(false);
-  const [droppedFile, setDroppedFile] = useState<File | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  /**
-   * Handles drag over event
-   */
-  const handleDragOver = useCallback((e: React.DragEvent) => {
+  // Drag handlers
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(true);
   }, []);
   
-  /**
-   * Handles drag leave event
-   */
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
   }, []);
   
-  /**
-   * Handles file drop
-   */
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+  
+  const validateAndProcessFile = useCallback((file: File) => {
+    // Check file size
+    if (file.size > MAX_IN_MEMORY_SIZE) {
+      alert(`File too large. Maximum size is ${formatFileSize(MAX_IN_MEMORY_SIZE)}.`);
+      return;
+    }
+    
+    // Check file type - use file.type or detect from filename
+    const mimeType = file.type || detectMimeType(file.name);
+    if (!ALLOWED_FILE_TYPES.includes(mimeType) && !mimeType.startsWith('text/')) {
+      alert(`File type "${mimeType}" is not supported. Allowed types: text, binary, JSON.`);
+      return;
+    }
+    
+    onFileDrop(file);
+  }, [onFileDrop]);
+  
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
     
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-      const file = files[0];
-      
-      // Check file size
-      if (file.size > MAX_IN_MEMORY_SIZE) {
-        alert(`File too large. Maximum size is ${formatFileSize(MAX_IN_MEMORY_SIZE)}`);
-        return;
-      }
-      
-      setDroppedFile(file);
-      onFileDrop(file);
+    const droppedFile = e.dataTransfer.files[0];
+    if (droppedFile) {
+      validateAndProcessFile(droppedFile);
     }
-  }, [onFileDrop]);
+  }, [validateAndProcessFile]);
   
-  /**
-   * Handles file input change
-   */
-  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-      const file = files[0];
-      
-      // Check file size
-      if (file.size > MAX_IN_MEMORY_SIZE) {
-        alert(`File too large. Maximum size is ${formatFileSize(MAX_IN_MEMORY_SIZE)}`);
-        return;
-      }
-      
-      setDroppedFile(file);
-      onFileDrop(file);
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFile = e.target.files?.[0];
+    if (selectedFile) {
+      validateAndProcessFile(selectedFile);
     }
-    
-    // Reset input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  }, [onFileDrop]);
+  }, [validateAndProcessFile]);
   
-  /**
-   * Handles textarea change
-   */
-  const handleTextareaChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    onInputChange(e.target.value);
-    setDroppedFile(null);
-  }, [onInputChange]);
+  const handleBrowseClick = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
   
-  /**
-   * Handles keyboard shortcuts
-   */
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Ctrl/Cmd + Enter to process
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       onProcess();
     }
   }, [onProcess]);
   
-  /**
-   * Removes dropped file
-   */
-  const handleRemoveFile = useCallback(() => {
-    setDroppedFile(null);
-    onInputChange('');
-  }, [onInputChange]);
-  
-  /**
-   * Opens file picker
-   */
-  const handleOpenFilePicker = useCallback(() => {
-    fileInputRef.current?.click();
-  }, []);
+  const modeLabel = mode === 'encode' ? 'Input to encode' : 'Input to decode';
+  const defaultPlaceholder = placeholder || `Enter text to ${mode}...`;
   
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <span className={styles.label}>Input</span>
+        <span className={styles.label}>{modeLabel.toUpperCase()}</span>
         <div className={styles.actions}>
           <button
             className={styles.actionBtn}
-            onClick={handleOpenFilePicker}
+            onClick={handleBrowseClick}
             disabled={isProcessing}
-            title="Open file"
+            title="Browse files"
           >
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
@@ -171,87 +140,70 @@ export function InputArea({
         </div>
       </div>
       
-      <div
-        className={`${styles.inputWrapper} ${isDragging ? styles.dragging : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {droppedFile ? (
-          <FilePreview file={droppedFile} onRemove={handleRemoveFile} />
+      <div className={styles.inputWrapper}>
+        {file ? (
+          <FileInfo
+            file={file}
+            onRemove={() => onFileDrop(null as unknown as File)}
+          />
         ) : (
-          <>
+          <div
+            className={`${styles.dropZone} ${isDragging ? styles.active : ''}`}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onClick={handleBrowseClick}
+          >
+            <svg className={styles.dropZoneIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <span className={styles.dropZoneText}>
+              Drop file here or click to browse
+            </span>
+            <span className={styles.dropZoneHint}>
+              Max {formatFileSize(MAX_IN_MEMORY_SIZE)} • Text, Binary, JSON
+            </span>
+          </div>
+        )}
+        
+        {!file && (
+          <div className={styles.textareaWrapper}>
             <textarea
-              ref={textareaRef}
               className={styles.textarea}
               value={value}
-              onChange={handleTextareaChange}
+              onChange={(e) => onInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={placeholder}
+              placeholder={defaultPlaceholder}
               disabled={isProcessing}
               spellCheck={false}
             />
-            
-            {isDragging && (
-              <div className={styles.dropOverlay}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                <span>Drop file here</span>
-              </div>
-            )}
-          </>
+          </div>
         )}
-      </div>
-      
-      <div className={styles.footer}>
-        <button
-          className={styles.processBtn}
-          onClick={onProcess}
-          disabled={isProcessing || (!value && !droppedFile)}
-        >
-          {isProcessing ? (
-            <>
-              <span className={styles.spinner} />
-              Processing...
-            </>
-          ) : (
-            mode === 'encode' ? 'Encode' : 'Decode'
-          )}
-        </button>
         
-        <span className={styles.hint}>
-          Ctrl+Enter to process
-        </span>
+        <input
+          ref={fileInputRef}
+          type="file"
+          className={styles.fileInput}
+          onChange={handleFileSelect}
+          accept=".txt,.json,.bin,*/*"
+        />
       </div>
-      
-      {/* Hidden file input */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".txt,.json,.bin"
-        className={styles.fileInput}
-        onChange={handleFileInputChange}
-      />
     </div>
   );
 }
 
 /**
- * File Preview Component
+ * File info display component
  */
-interface FilePreviewProps {
-  file: File;
-  onRemove: () => void;
-}
-
-function FilePreview({ file, onRemove }: FilePreviewProps) {
-  const isText = isTextType(file.type) || file.name.endsWith('.txt') || file.name.endsWith('.json');
+function FileInfo({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const mimeType = file.type || detectMimeType(file.name);
+  const isText = isTextType(mimeType);
   
   return (
-    <div className={styles.filePreview}>
+    <div className={styles.fileInfo}>
       <div className={styles.fileIcon}>
         {isText ? (
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
