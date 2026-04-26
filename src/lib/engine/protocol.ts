@@ -89,12 +89,19 @@ export const ENGINE_ERRORS = {
 
 /**
  * Preset engine paths
+ * Note: These paths are relative to the public directory
+ * The basePath from next.config.ts will be handled by the hook
  */
 export const PRESET_ENGINES = [
   '/engines/base64.wasm',
   '/engines/hex.wasm',
   '/engines/binary.wasm',
 ] as const;
+
+/**
+ * Base path for the application (must match next.config.ts)
+ */
+export const APP_BASE_PATH = '/StarBrickVII';
 
 /**
  * Engine capability display labels

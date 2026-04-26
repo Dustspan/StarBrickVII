@@ -17,7 +17,7 @@ import {
   type ProcessingResult,
   MAX_IN_MEMORY_SIZE,
 } from '@/lib/engine/types';
-import { PRESET_ENGINES } from '@/lib/engine/protocol';
+import { PRESET_ENGINES, APP_BASE_PATH } from '@/lib/engine/protocol';
 
 // Worker message types
 interface WorkerRequest {
@@ -245,11 +245,22 @@ export function useEngine(): UseEngineReturn {
     setProcessingState('loading');
     setError(null);
     
-    for (const wasmUrl of PRESET_ENGINES) {
+    // Determine the correct base path based on environment
+    // In production (GitHub Pages), we need the basePath
+    // In development, we use the root path
+    const isDev = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || 
+       window.location.hostname === '127.0.0.1' ||
+       window.location.port === '3000');
+    const basePath = isDev ? '' : APP_BASE_PATH;
+    
+    for (const wasmPath of PRESET_ENGINES) {
       try {
+        // Construct full URL with basePath
+        const wasmUrl = `${basePath}${wasmPath}`;
         await sendWorkerMessage('load', { wasmUrl });
       } catch (err) {
-        console.error(`Failed to load engine ${wasmUrl}:`, err);
+        console.error(`Failed to load engine ${wasmPath}:`, err);
       }
     }
     
