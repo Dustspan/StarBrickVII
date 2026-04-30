@@ -1,5 +1,5 @@
 /**
- * StarBrickVII WASM Engine Protocol Constants
+ * StarBrickVII WASM Engine Protocol
  */
 
 export const PRESET_ENGINES = [

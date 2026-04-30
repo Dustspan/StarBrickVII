@@ -29,4 +29,13 @@ export interface ProcessingResult {
   duration: number;
 }
 
+export interface WasmInstance {
+  memory: WebAssembly.Memory;
+  alloc: (size: number) => number;
+  free: (ptr: number, size: number) => void;
+  encode: (ptr: number, len: number, outLenPtr: number) => number;
+  decode: (ptr: number, len: number, outLenPtr: number) => number;
+}
+
 export const MAX_IN_MEMORY_SIZE = 100 * 1024 * 1024;
+export const CHUNK_SIZE = 1024 * 1024;
