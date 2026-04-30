@@ -1,516 +1,272 @@
 /**
  * useEngine Hook
  * 
- * Manages WASM engine loading, selection, and operations.
- * Connects to real WASM engines from public/engines directory.
- * Implements request queue with timeout and abort support.
+ * Manages WASM engine loading, selection, and processing.
+ * Loads ALL engines in parallel, switches between cached instances.
  */
 
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import {
-  type Engine,
-  type EngineInfo,
-  type ProcessingMode,
-  type ProcessingState,
-  type ProcessingResult,
-  MAX_IN_MEMORY_SIZE,
-} from '@/lib/engine/types';
+import { type Engine, type ProcessingMode, type ProcessingState, type ProcessingResult, MAX_IN_MEMORY_SIZE } from '@/lib/engine/types';
 import { PRESET_ENGINES, APP_BASE_PATH } from '@/lib/engine/protocol';
 
-// Worker message types
-interface WorkerRequest {
+interface WResponse {
   id: string;
-  type: 'load' | 'encode' | 'decode' | 'abort';
-  payload: {
-    wasmUrl?: string;
-    text?: string;
-    chunk?: ArrayBuffer;
-    totalSize?: number;
-    chunkIndex?: number;
-    totalChunks?: number;
-    isLast?: boolean;
-  };
-}
-
-interface WorkerResponse {
-  id: string;
-  type: 'loaded' | 'progress' | 'result' | 'error';
-  payload?: {
-    info?: EngineInfo;
-    result?: string;
-    progress?: number;
-  };
+  type: 'loaded' | 'progress' | 'result' | 'chunk_result' | 'error';
+  payload?: { info?: Engine; result?: string; data?: ArrayBuffer; progress?: number };
   error?: string;
 }
 
-// Request queue entry
-interface RequestEntry {
-  resolve: (value: string) => void;
-  reject: (error: Error) => void;
-  onProgress?: (progress: number) => void;
-  timeoutId: ReturnType<typeof setTimeout>;
-  aborted: boolean;
+interface PendingReq {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
-interface UseEngineReturn {
-  // Engine state
-  engines: Map<string, Engine>;
-  currentEngine: Engine | null;
-  processingState: ProcessingState;
-  error: string | null;
-  
-  // Engine management
-  loadPresetEngines: () => Promise<void>;
-  loadCustomEngine: (file: File) => Promise<void>;
-  selectEngine: (id: string) => void;
-  unloadEngine: (id: string) => void;
-  
-  // Processing
-  processText: (text: string, mode: ProcessingMode) => Promise<ProcessingResult | null>;
-  processFile: (file: File, mode: ProcessingMode) => Promise<ProcessingResult | null>;
-  
-  // Progress
-  progress: number;
-  estimatedTimeRemaining: number | null;
-  
-  // Error handling
-  clearError: () => void;
-  
-  // Abort
-  abort: () => void;
-}
+const TIMEOUT = 30000;
+const CHUNK = 1024 * 1024; // 1MB
 
-// Request timeout (30 seconds)
-const REQUEST_TIMEOUT = 30000;
-
-// Chunk size for large files (1MB)
-const CHUNK_SIZE = 1024 * 1024;
-
-/**
- * Generates a unique request ID
- */
-function generateRequestId(): string {
-  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-}
-
-/**
- * useEngine Hook
- */
-export function useEngine(): UseEngineReturn {
-  // State
+export function useEngine() {
   const [engines, setEngines] = useState<Map<string, Engine>>(new Map());
+  const [engineList, setEngineList] = useState<Engine[]>([]);
   const [currentEngine, setCurrentEngine] = useState<Engine | null>(null);
   const [processingState, setProcessingState] = useState<ProcessingState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
-  const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null);
-  
-  // Refs
+  const [eta, setEta] = useState<number | null>(null);
+  const [loadProgress, setLoadProgress] = useState(0);
+
   const workerRef = useRef<Worker | null>(null);
-  const requestQueueRef = useRef<Map<string, RequestEntry>>(new Map());
-  const processingStartTimeRef = useRef<number | null>(null);
-  const currentRequestIdRef = useRef<string | null>(null);
-  
-  /**
-   * Gets or creates a worker
-   */
-  const getWorker = useCallback((): Worker => {
+  const pendingRef = useRef<Map<string, PendingReq>>(new Map());
+  const reqIdRef = useRef(0);
+  const startTimeRef = useRef(0);
+
+  const getWorker = useCallback(() => {
     if (!workerRef.current) {
       workerRef.current = new Worker(
-        new URL('../workers/engine.worker.ts', import.meta.url),
-        { type: 'module' }
+        new URL('../workers/engine.worker.ts', import.meta.url)
       );
-      
-      workerRef.current.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const { id, type, payload, error } = event.data;
-        const entry = requestQueueRef.current.get(id);
-        
-        if (!entry) return;
-        
-        switch (type) {
-          case 'loaded':
-            // Engine loaded successfully
-            if (payload?.info) {
-              const engine: Engine = {
-                ...payload.info,
-              };
-              setEngines(prev => {
-                const next = new Map(prev);
-                next.set(engine.id, engine);
-                return next;
-              });
-              setCurrentEngine(engine);
-              setProcessingState('idle');
-            }
-            break;
-            
-          case 'progress':
-            if (payload?.progress !== undefined) {
-              setProgress(payload.progress);
-              entry.onProgress?.(payload.progress);
-              
-              // Estimate remaining time
-              if (processingStartTimeRef.current && payload.progress > 0) {
-                const elapsed = Date.now() - processingStartTimeRef.current;
-                const total = elapsed / payload.progress;
-                const remaining = total - elapsed;
-                setEstimatedTimeRemaining(Math.round(remaining));
-              }
-            }
-            break;
-            
-          case 'result':
-            if (payload?.result !== undefined && !entry.aborted) {
-              clearTimeout(entry.timeoutId);
-              requestQueueRef.current.delete(id);
-              entry.resolve(payload.result);
-              setProgress(1);
-              setProcessingState('complete');
-              setEstimatedTimeRemaining(null);
-            }
-            break;
-            
-          case 'error':
-            clearTimeout(entry.timeoutId);
-            requestQueueRef.current.delete(id);
-            if (!entry.aborted) {
-              entry.reject(new Error(error || 'Unknown error'));
-              setError(error || 'Unknown error');
-              setProcessingState('error');
-            }
-            break;
+      workerRef.current.onmessage = (e: MessageEvent<WResponse>) => {
+        const { id, type, payload, error: errMsg } = e.data;
+        const req = pendingRef.current.get(id);
+        if (!req) return;
+
+        if (type === 'progress' && payload?.progress !== undefined) {
+          setLoadProgress(payload.progress);
+          return;
         }
-      };
-      
-      workerRef.current.onerror = (event) => {
-        console.error('Worker error:', event);
-        setError('Worker error: ' + event.message);
-        setProcessingState('error');
+
+        if (type === 'error') {
+          clearTimeout(req.timer);
+          pendingRef.current.delete(id);
+          req.reject(new Error(errMsg || 'Unknown error'));
+          return;
+        }
+
+        if (type === 'loaded' && payload?.info) {
+          clearTimeout(req.timer);
+          pendingRef.current.delete(id);
+          const info = payload.info as Engine;
+          setEngines(prev => {
+            const next = new Map(prev);
+            next.set(info.id, info);
+            return next;
+          });
+          req.resolve(info);
+          return;
+        }
+
+        if (type === 'result' && payload?.result !== undefined) {
+          clearTimeout(req.timer);
+          pendingRef.current.delete(id);
+          setProgress(1);
+          setProcessingState('complete');
+          setEta(null);
+          req.resolve(payload.result);
+          return;
+        }
+
+        if (type === 'chunk_result' && payload?.data) {
+          clearTimeout(req.timer);
+          pendingRef.current.delete(id);
+          if (payload.progress) setProgress(payload.progress);
+          req.resolve(payload.data);
+          return;
+        }
       };
     }
-    
     return workerRef.current;
   }, []);
-  
-  /**
-   * Sends a message to the worker and returns a promise
-   */
-  const sendWorkerMessage = useCallback((
-    type: WorkerRequest['type'],
-    payload: WorkerRequest['payload'],
-    onProgress?: (progress: number) => void
-  ): Promise<string> => {
+
+  const send = useCallback((type: string, payload: Record<string, unknown> = {}): Promise<unknown> => {
     return new Promise((resolve, reject) => {
       const worker = getWorker();
-      const id = generateRequestId();
-      
-      // Set up timeout
-      const timeoutId = setTimeout(() => {
-        const entry = requestQueueRef.current.get(id);
-        if (entry) {
-          entry.aborted = true;
-          requestQueueRef.current.delete(id);
-          reject(new Error('Request timeout'));
-          setError('Request timeout (30s)');
-          setProcessingState('error');
-          
-          // Terminate and recreate worker
-          worker.terminate();
-          workerRef.current = null;
-        }
-      }, REQUEST_TIMEOUT);
-      
-      // Add to queue
-      requestQueueRef.current.set(id, {
-        resolve,
-        reject,
-        onProgress,
-        timeoutId,
-        aborted: false,
-      });
-      
-      currentRequestIdRef.current = id;
-      
-      // Send message
+      const id = `req_${++reqIdRef.current}`;
+      const timer = setTimeout(() => {
+        pendingRef.current.delete(id);
+        reject(new Error('Request timeout'));
+      }, TIMEOUT);
+
+      pendingRef.current.set(id, { resolve, reject, timer });
       worker.postMessage({ id, type, payload });
     });
   }, [getWorker]);
-  
-  /**
-   * Loads preset engines
-   */
-  const loadPresetEngines = useCallback(async (): Promise<void> => {
+
+  // Load ALL engines in parallel
+  const loadPresetEngines = useCallback(async () => {
     setProcessingState('loading');
     setError(null);
-    
-    // Determine the correct base path based on environment
-    // In production (GitHub Pages), we need the basePath
-    // In development, we use the root path
-    const isDev = typeof window !== 'undefined' && 
-      (window.location.hostname === 'localhost' || 
-       window.location.hostname === '127.0.0.1' ||
-       window.location.port === '3000');
-    const basePath = isDev ? '' : APP_BASE_PATH;
-    
-    for (const wasmPath of PRESET_ENGINES) {
-      try {
-        // Construct full URL with basePath
-        const wasmUrl = `${basePath}${wasmPath}`;
-        await sendWorkerMessage('load', { wasmUrl });
-      } catch (err) {
-        console.error(`Failed to load engine ${wasmPath}:`, err);
-      }
-    }
-    
-    setProcessingState('idle');
-  }, [sendWorkerMessage]);
-  
-  /**
-   * Loads a custom engine from file
-   */
-  const loadCustomEngine = useCallback(async (file: File): Promise<void> => {
-    setProcessingState('loading');
-    setError(null);
-    
+    setLoadProgress(0);
+
+    const isDev = typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.port === '3000');
+    const bp = isDev ? '' : APP_BASE_PATH;
+
     try {
-      // Create object URL for the file
-      const wasmUrl = URL.createObjectURL(file);
-      await sendWorkerMessage('load', { wasmUrl });
+      const results = await Promise.allSettled(
+        PRESET_ENGINES.map(path => send('load', { wasmUrl: `${bp}${path}` }))
+      );
+
+      const loaded: Engine[] = [];
+      results.forEach(r => {
+        if (r.status === 'fulfilled' && r.value) loaded.push(r.value as Engine);
+      });
+
+      setEngineList(loaded);
+      if (loaded.length > 0) {
+        // Auto-select first engine
+        const first = loaded[0];
+        setCurrentEngine(first);
+        // Tell worker to switch
+        send('switch', { engineId: first.id }).catch(() => {});
+      }
+
+      if (loaded.length === 0) {
+        setError('Failed to load any engine');
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load custom engine';
-      setError(message);
-      setProcessingState('error');
+      setError(err instanceof Error ? err.message : 'Load failed');
+    } finally {
+      setProcessingState('idle');
+      setLoadProgress(1);
     }
-  }, [sendWorkerMessage]);
-  
-  /**
-   * Selects an engine
-   */
-  const selectEngine = useCallback((id: string): void => {
+  }, [send]);
+
+  const selectEngine = useCallback((id: string) => {
     const engine = engines.get(id);
-    if (engine) {
-      setCurrentEngine(engine);
-      setError(null);
-    }
-  }, [engines]);
-  
-  /**
-   * Unloads an engine
-   */
-  const unloadEngine = useCallback((id: string): void => {
-    setEngines(prev => {
-      const next = new Map(prev);
-      next.delete(id);
-      return next;
-    });
-    
-    if (currentEngine?.id === id) {
-      setCurrentEngine(null);
-    }
-  }, [currentEngine]);
-  
-  /**
-   * Processes text
-   */
-  const processText = useCallback(async (
-    text: string,
-    mode: ProcessingMode
-  ): Promise<ProcessingResult | null> => {
-    if (!currentEngine) {
-      setError('No engine selected');
-      return null;
-    }
-    
+    if (!engine) return;
+    setCurrentEngine(engine);
+    setError(null);
+    send('switch', { engineId: id }).catch(() => {});
+  }, [engines, send]);
+
+  const processText = useCallback(async (text: string, mode: ProcessingMode): Promise<string | null> => {
+    if (!currentEngine) { setError('No engine selected'); return null; }
     setProcessingState('processing');
     setError(null);
     setProgress(0);
-    processingStartTimeRef.current = Date.now();
-    
+    startTimeRef.current = Date.now();
+
     try {
-      const startTime = Date.now();
-      
-      const result = await sendWorkerMessage(mode, { text }, (p) => {
-        setProgress(p);
-      });
-      
-      const duration = Date.now() - startTime;
-      
-      return {
-        data: new Blob([result], { type: 'text/plain' }),
-        inputSize: new Blob([text]).size,
-        outputSize: result.length,
+      const result = await send(mode, { text }) as string;
+      setProcessingState('complete');
+      return result;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Processing failed';
+      setError(msg);
+      setProcessingState('error');
+      return null;
+    }
+  }, [currentEngine, send]);
+
+  const processFile = useCallback(async (file: File, mode: ProcessingMode): Promise<ProcessingResult | null> => {
+    if (!currentEngine) { setError('No engine selected'); return null; }
+    if (file.size > MAX_IN_MEMORY_SIZE) { setError(`File too large (max ${MAX_IN_MEMORY_SIZE / 1024 / 1024}MB)`); return null; }
+
+    setProcessingState('processing');
+    setError(null);
+    setProgress(0);
+    startTimeRef.current = Date.now();
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const chunks: Uint8Array[] = [];
+      const totalChunks = Math.max(1, Math.ceil(buffer.byteLength / CHUNK));
+
+      if (buffer.byteLength <= CHUNK) {
+        // Single chunk
+        const resultBuf = await send(mode, { data: buffer, chunkIndex: 0, totalChunks: 1 }) as ArrayBuffer;
+        chunks.push(new Uint8Array(resultBuf));
+        setProgress(1);
+      } else {
+        // Multi-chunk
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * CHUNK;
+          const end = Math.min(start + CHUNK, buffer.byteLength);
+          const slice = buffer.slice(start, end);
+          const resultBuf = await send(mode, { data: slice, chunkIndex: i, totalChunks }) as ArrayBuffer;
+          chunks.push(new Uint8Array(resultBuf));
+          setProgress((i + 1) / totalChunks);
+        }
+      }
+
+      const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+      const merged = new Uint8Array(totalLen);
+      let offset = 0;
+      for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+
+      const duration = Date.now() - startTimeRef.current;
+      const result: ProcessingResult = {
+        data: new Blob([merged], { type: 'application/octet-stream' }),
+        inputSize: file.size,
+        outputSize: totalLen,
         duration,
       };
+
+      setProcessingState('complete');
+      setEta(null);
+      return result;
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Processing failed';
-      setError(message);
+      const msg = err instanceof Error ? err.message : 'Processing failed';
+      setError(msg);
       setProcessingState('error');
       return null;
     }
-  }, [currentEngine, sendWorkerMessage]);
-  
-  /**
-   * Processes a file
-   */
-  const processFile = useCallback(async (
-    file: File,
-    mode: ProcessingMode
-  ): Promise<ProcessingResult | null> => {
-    if (!currentEngine) {
-      setError('No engine selected');
-      return null;
-    }
-    
-    // Check file size
-    if (file.size > MAX_IN_MEMORY_SIZE) {
-      setError(`File too large (max ${MAX_IN_MEMORY_SIZE / 1024 / 1024}MB)`);
-      return null;
-    }
-    
-    setProcessingState('processing');
-    setError(null);
-    setProgress(0);
-    processingStartTimeRef.current = Date.now();
-    
-    try {
-      const startTime = Date.now();
-      
-      // Read file content
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      
-      // For large files, process in chunks
-      if (file.size > CHUNK_SIZE) {
-        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-        let result = '';
-        
-        for (let i = 0; i < totalChunks; i++) {
-          const chunkStart = i * CHUNK_SIZE;
-          const chunkEnd = Math.min(chunkStart + CHUNK_SIZE, file.size);
-          const chunk = bytes.slice(chunkStart, chunkEnd);
-          
-          const chunkResult = await sendWorkerMessage(mode, {
-            chunk: chunk.buffer,
-            chunkIndex: i,
-            totalChunks,
-            totalSize: file.size,
-            isLast: i === totalChunks - 1,
-          }, (p) => {
-            // Progress is chunk-based
-            const overallProgress = (i + p) / totalChunks;
-            setProgress(overallProgress);
-          });
-          
-          result += chunkResult;
-        }
-        
-        const duration = Date.now() - startTime;
-        
-        return {
-          data: new Blob([result], { type: 'text/plain' }),
-          inputSize: file.size,
-          outputSize: result.length,
-          duration,
-        };
-      } else {
-        // Small file - process directly
-        const result = await sendWorkerMessage(mode, {
-          chunk: buffer,
-          totalSize: file.size,
-        }, (p) => {
-          setProgress(p);
-        });
-        
-        const duration = Date.now() - startTime;
-        
-        return {
-          data: new Blob([result], { type: 'text/plain' }),
-          inputSize: file.size,
-          outputSize: result.length,
-          duration,
-        };
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Processing failed';
-      setError(message);
-      setProcessingState('error');
-      return null;
-    }
-  }, [currentEngine, sendWorkerMessage]);
-  
-  /**
-   * Clears the error state
-   */
-  const clearError = useCallback((): void => {
-    setError(null);
-    if (processingState === 'error') {
-      setProcessingState('idle');
-    }
-  }, [processingState]);
-  
-  /**
-   * Aborts current processing
-   */
-  const abort = useCallback((): void => {
+  }, [currentEngine, send]);
+
+  const abort = useCallback(() => {
     const worker = workerRef.current;
-    
     if (worker) {
-      // Send abort message
-      if (currentRequestIdRef.current) {
-        worker.postMessage({
-          id: currentRequestIdRef.current,
-          type: 'abort',
-          payload: {},
-        });
-      }
-      
-      // Terminate worker
       worker.terminate();
       workerRef.current = null;
     }
-    
-    // Clear request queue
-    for (const [_id, entry] of requestQueueRef.current) {
-      entry.aborted = true;
-      clearTimeout(entry.timeoutId);
-      entry.reject(new Error('Operation aborted'));
+    for (const [, req] of pendingRef.current) {
+      clearTimeout(req.timer);
+      req.reject(new Error('Aborted'));
     }
-    requestQueueRef.current.clear();
-    
-    // Reset state
+    pendingRef.current.clear();
     setProcessingState('idle');
     setProgress(0);
-    setEstimatedTimeRemaining(null);
-    currentRequestIdRef.current = null;
+    setEta(null);
+    setError(null);
   }, []);
-  
-  // Cleanup workers on unmount
+
+  const clearError = useCallback(() => {
+    setError(null);
+    if (processingState === 'error') setProcessingState('idle');
+  }, [processingState]);
+
   useEffect(() => {
-    const worker = workerRef.current;
-    return () => {
-      if (worker) {
-        worker.terminate();
-      }
-    };
+    return () => { workerRef.current?.terminate(); };
   }, []);
-  
+
   return {
-    engines,
-    currentEngine,
-    processingState,
-    error,
-    loadPresetEngines,
-    loadCustomEngine,
-    selectEngine,
-    unloadEngine,
-    processText,
-    processFile,
-    progress,
-    estimatedTimeRemaining,
-    clearError,
-    abort,
+    engines, engineList, currentEngine,
+    processingState, error, progress, eta, loadProgress,
+    loadPresetEngines, selectEngine,
+    processText, processFile,
+    abort, clearError,
   };
 }
 

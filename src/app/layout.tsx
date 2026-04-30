@@ -4,12 +4,6 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'StarBrickVII',
   description: 'WebAssembly-based Encoding/Decoding Toolkit',
-  keywords: ['wasm', 'webassembly', 'encoding', 'decoding', 'base64', 'hex', 'binary'],
-  authors: [{ name: 'Dustspan' }],
-  robots: {
-    index: true,
-    follow: true,
-  },
 };
 
 export const viewport: Viewport = {
@@ -17,19 +11,13 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: '#0a0a0b',
+  themeColor: '#09090b',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

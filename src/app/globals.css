@@ -1,376 +1,51 @@
-/**
- * StarBrickVII Global Styles
- * 
- * Vintage telephone tech aesthetic with warm orange accents.
- * Features CRT scan lines, grid patterns, and retro-futuristic design.
- */
-
-/* Font imports */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
-/* CSS Reset */
-*, *::before, *::after {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-/* Body styling - dark tech theme */
-body {
-  background: #09090b;
-  color: #e4e4e7;
-  font-family: 'Courier New', monospace;
-  min-height: 100vh;
-  position: relative;
-}
-
-/* CRT scan line overlay */
-body::before {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 0, 0, 0.1) 2px,
-    rgba(0, 0, 0, 0.1) 4px
-  );
-  pointer-events: none;
-  z-index: 9999;
-  opacity: 0.3;
-}
-
-/* Grid pattern overlay */
-body::after {
-  content: '';
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-image: 
-    linear-gradient(rgba(249, 115, 22, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(249, 115, 22, 0.02) 1px, transparent 1px);
-  background-size: 40px 40px;
-  pointer-events: none;
-  z-index: -1;
-}
-
-/* Button, input, textarea styling */
-button, input, textarea {
-  background: #18181b;
-  border: 1px solid #27272a;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-  color: #f97316;
-  border-radius: 4px;
-  transition: all 0.3s ease;
-  font-family: inherit;
-}
-
-button:hover:not(:disabled) {
-  box-shadow: 0 0 8px rgba(249, 115, 22, 0.4);
-  border-color: #f97316;
-}
-
-button:active:not(:disabled) {
-  transform: translateY(1px);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* CSS Variables */
 :root {
-  /* Colors - Neutral base with subtle warm accent */
-  --color-bg: #09090b;
-  --color-bg-elevated: #111113;
-  --color-bg-surface: #18181b;
-  --color-bg-hover: #1f1f23;
-  
-  --color-fg: #e4e4e7;
-  --color-fg-muted: #a1a1aa;
-  --color-fg-subtle: #71717a;
-  
-  --color-accent: #f97316;
-  --color-accent-muted: rgba(249, 115, 22, 0.15);
-  --color-accent-glow: rgba(249, 115, 22, 0.4);
-  
-  --color-copper: #b45309;
-  --color-copper-muted: rgba(180, 83, 9, 0.3);
-  
-  --color-border: #27272a;
-  --color-border-subtle: #1f1f23;
-  
-  --color-success: #22c55e;
-  --color-success-muted: rgba(34, 197, 94, 0.15);
-  
-  --color-error: #ef4444;
-  --color-error-muted: rgba(239, 68, 68, 0.15);
-  
-  --color-warning: #eab308;
-  --color-warning-muted: rgba(234, 179, 8, 0.15);
-  
-  /* Typography */
-  --font-mono: 'Courier New', monospace;
-  --font-sans: 'Inter', system-ui, sans-serif;
-  
-  --text-xs: 0.75rem;
-  --text-sm: 0.875rem;
-  --text-base: 1rem;
-  --text-lg: 1.125rem;
-  --text-xl: 1.25rem;
-  --text-2xl: 1.5rem;
-  
-  /* Spacing */
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.25rem;
-  --space-6: 1.5rem;
-  --space-8: 2rem;
-  --space-10: 2.5rem;
-  --space-12: 3rem;
-  
-  /* Border radius */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --radius-xl: 1rem;
-  --radius-full: 9999px;
-  
-  /* Transitions */
-  --transition-fast: 150ms ease;
-  --transition-normal: 300ms ease;
-  --transition-slow: 500ms ease;
-  
-  /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(249, 115, 22, 0.3);
+  --bg: #09090b;
+  --surface: #111113;
+  --surface2: #18181b;
+  --border: #27272a;
+  --border2: #3f3f46;
+  --fg: #e4e4e7;
+  --fg2: #a1a1aa;
+  --fg3: #71717a;
+  --accent: #f97316;
+  --accent2: #fb923c;
+  --copper: #b45309;
+  --glow: rgba(249, 115, 22, 0.35);
+  --glow2: rgba(249, 115, 22, 0.15);
+  --green: #22c55e;
+  --red: #ef4444;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
 }
 
-/* Typography utilities */
-.font-mono {
-  font-family: var(--font-mono);
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
 }
 
-.font-sans {
-  font-family: var(--font-sans);
-}
+button, input, textarea { font-family: inherit; }
 
-.text-xs { font-size: var(--text-xs); }
-.text-sm { font-size: var(--text-sm); }
-.text-base { font-size: var(--text-base); }
-.text-lg { font-size: var(--text-lg); }
-.text-xl { font-size: var(--text-xl); }
-.text-2xl { font-size: var(--text-2xl); }
+::selection { background: var(--accent); color: var(--bg); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Color utilities */
-.text-fg { color: var(--color-fg); }
-.text-muted { color: var(--color-fg-muted); }
-.text-subtle { color: var(--color-fg-subtle); }
-.text-accent { color: var(--color-accent); }
-.text-success { color: var(--color-success); }
-.text-error { color: var(--color-error); }
-.text-warning { color: var(--color-warning); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border2); }
 
-/* Background utilities */
-.bg-base { background-color: var(--color-bg); }
-.bg-elevated { background-color: var(--color-bg-elevated); }
-.bg-surface { background-color: var(--color-bg-surface); }
-.bg-hover { background-color: var(--color-bg-hover); }
-.bg-accent { background-color: var(--color-accent-muted); }
-.bg-success { background-color: var(--color-success-muted); }
-.bg-error { background-color: var(--color-error-muted); }
-
-/* Border utilities */
-.border { border: 1px solid var(--color-border); }
-.border-subtle { border: 1px solid var(--color-border-subtle); }
-.border-accent { border: 1px solid var(--color-accent); }
-
-/* Shadow utilities */
-.shadow-sm { box-shadow: var(--shadow-sm); }
-.shadow-md { box-shadow: var(--shadow-md); }
-.shadow-lg { box-shadow: var(--shadow-lg); }
-.shadow-glow { box-shadow: var(--shadow-glow); }
-
-/* Inset shadow for recessed elements */
-.inset-shadow {
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-}
-
-/* Glow effect */
-.glow {
-  box-shadow: 0 0 10px var(--color-accent-glow);
-}
-
-.glow-success {
-  box-shadow: 0 0 10px rgba(34, 197, 94, 0.4);
-}
-
-.glow-error {
-  box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);
-}
-
-/* Spacing utilities */
-.p-1 { padding: var(--space-1); }
-.p-2 { padding: var(--space-2); }
-.p-3 { padding: var(--space-3); }
-.p-4 { padding: var(--space-4); }
-.p-5 { padding: var(--space-5); }
-.p-6 { padding: var(--space-6); }
-
-.m-1 { margin: var(--space-1); }
-.m-2 { margin: var(--space-2); }
-.m-3 { margin: var(--space-3); }
-.m-4 { margin: var(--space-4); }
-.m-5 { margin: var(--space-5); }
-.m-6 { margin: var(--space-6); }
-
-/* Flex utilities */
-.flex { display: flex; }
-.flex-col { flex-direction: column; }
-.items-center { align-items: center; }
-.justify-center { justify-content: center; }
-.justify-between { justify-content: space-between; }
-.gap-1 { gap: var(--space-1); }
-.gap-2 { gap: var(--space-2); }
-.gap-3 { gap: var(--space-3); }
-.gap-4 { gap: var(--space-4); }
-
-/* Grid utilities */
-.grid { display: grid; }
-.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
-.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-
-/* Border radius utilities */
-.rounded-sm { border-radius: var(--radius-sm); }
-.rounded-md { border-radius: var(--radius-md); }
-.rounded-lg { border-radius: var(--radius-lg); }
-.rounded-xl { border-radius: var(--radius-xl); }
-.rounded-full { border-radius: var(--radius-full); }
-
-/* Text overflow */
-.truncate {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Animation utilities */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-/* Keyframe animations */
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-@keyframes glow-pulse {
-  0%, 100% { 
-    box-shadow: 0 0 5px var(--color-accent-glow);
-  }
-  50% { 
-    box-shadow: 0 0 20px var(--color-accent-glow), 0 0 30px var(--color-accent-glow);
-  }
-}
-
-/* Animation classes */
-.animate-fade-in {
-  animation: fadeIn var(--transition-normal) ease-out;
-}
-
-.animate-slide-up {
-  animation: slideUp var(--transition-normal) ease-out;
-}
-
-.animate-pulse {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-
-.animate-glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
-}
-
-/* Selection styling */
-::selection {
-  background: var(--color-accent-muted);
-  color: var(--color-accent);
-}
-
-/* Scrollbar styling */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-fg-subtle);
-}
-
-/* Focus visible styling */
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-/* Link styling */
-a {
-  color: var(--color-accent);
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-a:hover {
-  color: var(--color-copper);
 }
