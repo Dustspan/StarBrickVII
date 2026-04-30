@@ -46,29 +46,29 @@ export async function loadWasmEngine(wasmUrl: string): Promise<{ engine: Engine;
   const encode = exp.sb_encode as (p: number, l: number, o: number) => number;
   const decode = exp.sb_decode as (p: number, l: number, o: number) => number;
 
-  // Validate required exports
   if (!alloc || !encode || !decode || !memory) {
     throw new Error(`Missing required WASM exports in ${wasmUrl}`);
   }
 
-  // Read metadata
+  // Allocate a single reusable outLenPtr for all metadata reads
   const outLenPtr = alloc(4);
+  const u32 = new Uint32Array(memory.buffer, outLenPtr, 1);
+
   const idPtr = (exp.sb_get_id as (p: number) => number)(outLenPtr);
-  const idLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
-  const id = readStr(memory, idPtr, idLen);
+  const id = readStr(memory, idPtr, u32[0]);
 
   const namePtr = (exp.sb_get_name as (p: number) => number)(outLenPtr);
-  const nameLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
-  const name = readStr(memory, namePtr, nameLen);
+  const name = readStr(memory, namePtr, u32[0]);
 
   const descPtr = (exp.sb_get_desc as (p: number) => number)(outLenPtr);
-  const descLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
-  const desc = readStr(memory, descPtr, descLen);
+  const desc = readStr(memory, descPtr, u32[0]);
 
+  // Read capabilities — sb_is_stateful is optional (v2.0)
   const binarySafe = !!(exp.sb_is_binary_safe as (() => number))();
   const selfInverse = !!(exp.sb_is_self_inverse as (() => number))();
   const reversible = !!(exp.sb_is_reversible as (() => number))();
-  const stateful = !!(exp.sb_is_stateful as (() => number))();
+  const statefulFn = exp.sb_is_stateful as (() => number) | undefined;
+  const stateful = statefulFn ? !!statefulFn() : false;
 
   const engine: Engine = { id, name, desc, capabilities: { binarySafe, selfInverse, reversible, stateful } };
   const wasm: WasmInstance = { memory, alloc, free, encode, decode };
