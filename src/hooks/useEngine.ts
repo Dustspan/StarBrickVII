@@ -1,9 +1,10 @@
 /**
  * StarBrickVII — useEngine Hook
- * 
+ *
  * Manages WASM engine loading, selection, and processing.
- * Loads ALL engines in parallel in the MAIN THREAD (no worker for loading).
- * Uses async chunked processing for large files to keep UI responsive.
+ * - Loads ALL preset engines in parallel (main thread, no worker)
+ * - Custom engine import with optimistic UI update
+ * - Async chunked processing for large files
  */
 
 'use client';
@@ -30,23 +31,27 @@ export function useEngine() {
   const [eta, setEta] = useState<number | null>(null);
   const [loadProgress, setLoadProgress] = useState(0);
 
-  // WASM instance cache (keyed by engine id)
   const wasmCacheRef = useRef<Map<string, WasmInstance>>(new Map());
-  // Abort controller for cancelling processing
   const abortRef = useRef<AbortController | null>(null);
 
   /**
    * Resolve the correct base path for WASM files
    */
-  const getBasePath = useCallback((): string => {
-    if (typeof window === 'undefined') return '';
-    const { hostname, port, pathname } = window.location;
-    const isDev = hostname === 'localhost' || hostname === '127.0.0.1' || port === '3000';
-    if (isDev) return '';
-    // For GitHub Pages: detect basePath from pathname
-    // e.g. /StarBrickVII/ → basePath = /StarBrickVII
-    if (pathname.startsWith(APP_BASE_PATH)) return APP_BASE_PATH;
-    return '';
+  const resolvePath = useCallback((path: string): string => {
+    if (typeof window === 'undefined') return path;
+    // Check if we're under a base path (GitHub Pages)
+    const base = document.querySelector('base');
+    if (base) {
+      const href = base.getAttribute('href') || '';
+      if (href !== '/' && !path.startsWith(href)) {
+        return href.replace(/\/$/, '') + path;
+      }
+    }
+    // Fallback: check if APP_BASE_PATH is in the URL
+    if (window.location.pathname.startsWith(APP_BASE_PATH)) {
+      return APP_BASE_PATH + path;
+    }
+    return path;
   }, []);
 
   /**
@@ -54,106 +59,157 @@ export function useEngine() {
    */
   const loadPresetEngines = useCallback(async () => {
     setProcessingState('loading');
-    setError(null);
     setLoadProgress(0);
-
-    const basePath = getBasePath();
-    const total = PRESET_ENGINES.length;
-    let loaded = 0;
+    setError(null);
 
     const results = await Promise.allSettled(
-      PRESET_ENGINES.map(async (path) => {
-        const url = `${basePath}${path}`;
+      PRESET_ENGINES.map(async (relPath, i) => {
+        const url = resolvePath(relPath);
         const { engine, wasm } = await loadWasmEngine(url);
-        wasmCacheRef.current.set(engine.id, wasm);
-        loaded++;
-        setLoadProgress(Math.round((loaded / total) * 100));
-        return engine;
+        setLoadProgress((i + 1) / PRESET_ENGINES.length);
+        return { engine, wasm };
       })
     );
 
-    const succeeded: Engine[] = [];
+    const newEngines = new Map<string, Engine>();
+    const newWasm = new Map<string, WasmInstance>();
+    const list: Engine[] = [];
     const errors: string[] = [];
 
     results.forEach((r, i) => {
-      if (r.status === 'fulfilled' && r.value) {
-        succeeded.push(r.value);
+      if (r.status === 'fulfilled') {
+        const { engine, wasm } = r.value;
+        newEngines.set(engine.id, engine);
+        newWasm.set(engine.id, wasm);
+        list.push(engine);
       } else {
-        const reason = r.status === 'rejected' ? r.reason : 'Unknown error';
-        errors.push(`${PRESET_ENGINES[i]}: ${reason instanceof Error ? reason.message : reason}`);
+        errors.push(`${PRESET_ENGINES[i]}: ${r.reason?.message || 'unknown error'}`);
       }
     });
 
-    if (succeeded.length > 0) {
-      const map = new Map<string, Engine>();
-      succeeded.forEach(e => map.set(e.id, e));
-      setEngines(map);
-      setEngineList(succeeded);
-      setCurrentEngine(succeeded[0]);
-      setProcessingState('idle');
-    } else {
-      setError(errors.join('\n') || 'Failed to load any engine');
-      setProcessingState('error');
+    // Merge with any existing custom engines
+    for (const [id, eng] of engines) {
+      if (!newEngines.has(id)) {
+        newEngines.set(id, eng);
+        list.push(eng);
+      }
     }
-  }, [getBasePath]);
+    for (const [id, wasm] of wasmCacheRef.current) {
+      if (!newWasm.has(id)) newWasm.set(id, wasm);
+    }
+
+    setEngines(newEngines);
+    setEngineList(list);
+    wasmCacheRef.current = newWasm;
+
+    if (list.length === 0) {
+      setError(`Failed to load engines:\n${errors.join('\n')}`);
+      setProcessingState('error');
+    } else {
+      if (errors.length > 0) {
+        console.warn('Some engines failed to load:', errors);
+      }
+      if (!currentEngine || !newEngines.has(currentEngine.id)) {
+        setCurrentEngine(list[0]);
+      }
+      setProcessingState('idle');
+    }
+  }, [resolvePath, engines, currentEngine]);
 
   /**
-   * Import a custom WASM engine from a File
+   * Import a custom WASM engine from a File object
+   * Uses optimistic UI update — engine appears immediately
    */
   const importCustomEngine = useCallback(async (file: File) => {
-    setProcessingState('loading');
     setError(null);
 
-    try {
-      const url = URL.createObjectURL(file);
-      const { engine, wasm } = await loadWasmEngine(url);
-      URL.revokeObjectURL(url);
+    // Optimistic: create a placeholder engine immediately
+    const placeholderId = `custom_${Date.now()}`;
+    const placeholder: Engine = {
+      id: placeholderId,
+      name: file.name.replace(/\.wasm$/i, ''),
+      desc: 'Loading...',
+      capabilities: { binarySafe: false, selfInverse: false, reversible: true, stateful: false },
+    };
 
-      wasmCacheRef.current.set(engine.id, wasm);
+    // Optimistically add to list
+    setEngines(prev => {
+      const next = new Map(prev);
+      next.set(placeholderId, placeholder);
+      return next;
+    });
+    setEngineList(prev => [...prev, placeholder]);
+    setCurrentEngine(placeholder);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const { engine, wasm } = await loadWasmEngine(arrayBuffer);
+
+      // Replace placeholder with real engine
       setEngines(prev => {
         const next = new Map(prev);
+        next.delete(placeholderId);
         next.set(engine.id, engine);
         return next;
       });
+      wasmCacheRef.current.set(engine.id, wasm);
+      wasmCacheRef.current.delete(placeholderId);
+
       setEngineList(prev => {
-        // Avoid duplicates
-        if (prev.some(e => e.id === engine.id)) return prev;
-        return [...prev, engine];
+        const idx = prev.findIndex(e => e.id === placeholderId);
+        const next = [...prev];
+        if (idx >= 0) next[idx] = engine;
+        else next.push(engine);
+        return next;
       });
       setCurrentEngine(engine);
-      setProcessingState('idle');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load custom engine');
-      setProcessingState('error');
+      // Rollback: remove placeholder
+      const msg = err instanceof Error ? err.message : 'Failed to load custom engine';
+      setError(msg);
+      setEngines(prev => {
+        const next = new Map(prev);
+        next.delete(placeholderId);
+        return next;
+      });
+      setEngineList(prev => prev.filter(e => e.id !== placeholderId));
+      // Restore previous selection
+      setCurrentEngine((_prev) => {
+        const remaining = engineList.filter(e => e.id !== placeholderId);
+        return remaining.length > 0 ? remaining[0] : null;
+      });
     }
-  }, []);
+  }, [engineList]);
 
   /**
-   * Select an engine by id
+   * Select an engine by ID
    */
   const selectEngine = useCallback((id: string) => {
-    const engine = engines.get(id);
-    if (engine) {
-      setCurrentEngine(engine);
+    const eng = engines.get(id) || engineList.find(e => e.id === id);
+    if (eng) {
+      setCurrentEngine(eng);
       setError(null);
     }
-  }, [engines]);
+  }, [engines, engineList]);
 
   /**
-   * Remove an engine by id
+   * Remove a custom engine by ID
    */
   const removeEngine = useCallback((id: string) => {
-    wasmCacheRef.current.delete(id);
+    if (engines.size <= 1) return; // Don't remove last engine
     setEngines(prev => {
       const next = new Map(prev);
       next.delete(id);
       return next;
     });
     setEngineList(prev => prev.filter(e => e.id !== id));
+    wasmCacheRef.current.delete(id);
     if (currentEngine?.id === id) {
-      setCurrentEngine(null);
+      const remaining = engineList.filter(e => e.id !== id);
+      if (remaining.length > 0) setCurrentEngine(remaining[0]);
+      else setCurrentEngine(null);
     }
-  }, [currentEngine]);
+  }, [engines, engineList, currentEngine]);
 
   /**
    * Process text input
@@ -171,7 +227,6 @@ export function useEngine() {
       const result = mode === 'encode' ? wasmEncode(wasm, text) : wasmDecode(wasm, text);
       setProgress(1);
       setProcessingState('complete');
-      setEta(null);
       return result;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Processing failed');
@@ -189,7 +244,7 @@ export function useEngine() {
     if (!wasm) { setError('Engine not loaded'); return null; }
 
     if (file.size > MAX_IN_MEMORY_SIZE) {
-      setError(`File too large (max ${MAX_IN_MEMORY_SIZE / 1024 / 1024}MB)`);
+      setError(`File too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Max: ${MAX_IN_MEMORY_SIZE / (1024 * 1024)} MB`);
       return null;
     }
 
@@ -199,33 +254,13 @@ export function useEngine() {
 
     const controller = new AbortController();
     abortRef.current = controller;
-
     const startTime = Date.now();
-    const processFn = mode === 'encode' ? wasmEncodeBinary : wasmDecodeBinary;
 
     try {
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
-
-      // For small files, process synchronously
-      if (data.length <= CHUNK_SIZE) {
-        if (controller.signal.aborted) throw new Error('Aborted');
-        const result = processFn(wasm, data);
-        const duration = Date.now() - startTime;
-        setProgress(1);
-        setProcessingState('complete');
-        setEta(null);
-        return {
-          data: new Blob([result.slice()], { type: 'application/octet-stream' }),
-          inputSize: file.size,
-          outputSize: result.length,
-          duration,
-        };
-      }
-
-      // For large files, process in chunks with UI yields
       const chunks: Uint8Array[] = [];
-      const totalChunks = Math.ceil(data.length / CHUNK_SIZE);
+      const totalChunks = Math.max(1, Math.ceil(data.length / CHUNK_SIZE));
 
       for (let i = 0; i < totalChunks; i++) {
         if (controller.signal.aborted) throw new Error('Aborted');
@@ -233,32 +268,40 @@ export function useEngine() {
         const start = i * CHUNK_SIZE;
         const end = Math.min(start + CHUNK_SIZE, data.length);
         const chunk = data.slice(start, end);
-        const result = processFn(wasm, chunk);
-        chunks.push(result);
 
-        const pct = (i + 1) / totalChunks;
-        setProgress(pct);
+        // Yield to UI thread between chunks
+        await new Promise<void>(resolve => {
+          requestAnimationFrame(() => {
+            const result = mode === 'encode'
+              ? wasmEncodeBinary(wasm, chunk)
+              : wasmDecodeBinary(wasm, chunk);
+            chunks.push(result);
+            const p = (i + 1) / totalChunks;
+            setProgress(p);
 
-        // Estimate remaining time
-        const elapsed = Date.now() - startTime;
-        const remaining = elapsed / pct - elapsed;
-        setEta(Math.round(remaining));
-
-        // Yield to UI thread every chunk
-        await new Promise<void>(resolve => setTimeout(resolve, 0));
+            // ETA estimation
+            const elapsed = Date.now() - startTime;
+            if (p > 0.05) {
+              setEta(Math.round((elapsed / p) * (1 - p)));
+            }
+            resolve();
+          });
+        });
       }
 
       // Merge chunks
-      const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+      let totalLen = 0;
+      for (const c of chunks) totalLen += c.length;
       const merged = new Uint8Array(totalLen);
       let offset = 0;
       for (const c of chunks) { merged.set(c, offset); offset += c.length; }
 
       const duration = Date.now() - startTime;
+      setProgress(1);
       setProcessingState('complete');
       setEta(null);
       return {
-        data: new Blob([merged], { type: 'application/octet-stream' }),
+        data: new Blob([merged.slice()], { type: 'application/octet-stream' }),
         inputSize: file.size,
         outputSize: totalLen,
         duration,
