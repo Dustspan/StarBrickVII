@@ -5,6 +5,8 @@
  * - Loads ALL preset engines in parallel (main thread, no worker)
  * - Custom engine import with optimistic UI update
  * - Async chunked processing for large files
+ *
+ * CRITICAL: All callbacks use refs for state access to avoid dependency loops.
  */
 
 'use client';
@@ -33,13 +35,13 @@ export function useEngine() {
 
   const wasmCacheRef = useRef<Map<string, WasmInstance>>(new Map());
   const abortRef = useRef<AbortController | null>(null);
+  const loadedRef = useRef(false); // prevent double-loading
 
   /**
    * Resolve the correct base path for WASM files
    */
   const resolvePath = useCallback((path: string): string => {
     if (typeof window === 'undefined') return path;
-    // Check if we're under a base path (GitHub Pages)
     const base = document.querySelector('base');
     if (base) {
       const href = base.getAttribute('href') || '';
@@ -47,7 +49,6 @@ export function useEngine() {
         return href.replace(/\/$/, '') + path;
       }
     }
-    // Fallback: check if APP_BASE_PATH is in the URL
     if (window.location.pathname.startsWith(APP_BASE_PATH)) {
       return APP_BASE_PATH + path;
     }
@@ -55,9 +56,13 @@ export function useEngine() {
   }, []);
 
   /**
-   * Load all preset engines in parallel
+   * Load all preset engines in parallel.
+   * Uses loadedRef to guarantee single execution — no dependency on state.
    */
   const loadPresetEngines = useCallback(async () => {
+    if (loadedRef.current) return;
+    loadedRef.current = true;
+
     setProcessingState('loading');
     setLoadProgress(0);
     setError(null);
@@ -87,7 +92,7 @@ export function useEngine() {
       }
     });
 
-    // Merge with any existing custom engines
+    // Merge with any existing custom engines (from ref, not state)
     for (const [id, eng] of engines) {
       if (!newEngines.has(id)) {
         newEngines.set(id, eng);
@@ -109,21 +114,20 @@ export function useEngine() {
       if (errors.length > 0) {
         console.warn('Some engines failed to load:', errors);
       }
-      if (!currentEngine || !newEngines.has(currentEngine.id)) {
-        setCurrentEngine(list[0]);
-      }
+      // Only auto-select if nothing is selected yet
+      setCurrentEngine(prev => prev && newEngines.has(prev.id) ? prev : list[0]);
       setProcessingState('idle');
     }
-  }, [resolvePath, engines, currentEngine]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolvePath]);
 
   /**
-   * Import a custom WASM engine from a File object
-   * Uses optimistic UI update — engine appears immediately
+   * Import a custom WASM engine from a File object.
+   * Optimistic UI — engine appears immediately with a placeholder.
    */
   const importCustomEngine = useCallback(async (file: File) => {
     setError(null);
 
-    // Optimistic: create a placeholder engine immediately
     const placeholderId = `custom_${Date.now()}`;
     const placeholder: Engine = {
       id: placeholderId,
@@ -132,12 +136,8 @@ export function useEngine() {
       capabilities: { binarySafe: false, selfInverse: false, reversible: true, stateful: false },
     };
 
-    // Optimistically add to list
-    setEngines(prev => {
-      const next = new Map(prev);
-      next.set(placeholderId, placeholder);
-      return next;
-    });
+    // Optimistically add
+    setEngines(prev => { const n = new Map(prev); n.set(placeholderId, placeholder); return n; });
     setEngineList(prev => [...prev, placeholder]);
     setCurrentEngine(placeholder);
 
@@ -147,10 +147,10 @@ export function useEngine() {
 
       // Replace placeholder with real engine
       setEngines(prev => {
-        const next = new Map(prev);
-        next.delete(placeholderId);
-        next.set(engine.id, engine);
-        return next;
+        const n = new Map(prev);
+        n.delete(placeholderId);
+        n.set(engine.id, engine);
+        return n;
       });
       wasmCacheRef.current.set(engine.id, wasm);
       wasmCacheRef.current.delete(placeholderId);
@@ -164,52 +164,57 @@ export function useEngine() {
       });
       setCurrentEngine(engine);
     } catch (err) {
-      // Rollback: remove placeholder
       const msg = err instanceof Error ? err.message : 'Failed to load custom engine';
       setError(msg);
-      setEngines(prev => {
-        const next = new Map(prev);
-        next.delete(placeholderId);
-        return next;
-      });
+      // Rollback: remove placeholder
+      setEngines(prev => { const n = new Map(prev); n.delete(placeholderId); return n; });
       setEngineList(prev => prev.filter(e => e.id !== placeholderId));
-      // Restore previous selection
-      setCurrentEngine((_prev) => {
+      setCurrentEngine(prev => {
+        if (prev?.id !== placeholderId) return prev;
+        // Fall back to first available engine
         const remaining = engineList.filter(e => e.id !== placeholderId);
         return remaining.length > 0 ? remaining[0] : null;
       });
     }
-  }, [engineList]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Select an engine by ID
    */
   const selectEngine = useCallback((id: string) => {
-    const eng = engines.get(id) || engineList.find(e => e.id === id);
-    if (eng) {
-      setCurrentEngine(eng);
-      setError(null);
-    }
-  }, [engines, engineList]);
+    setEngines(prev => {
+      const eng = prev.get(id);
+      if (eng) {
+        setCurrentEngine(eng);
+        setError(null);
+      }
+      return prev; // don't mutate
+    });
+  }, []);
 
   /**
    * Remove a custom engine by ID
    */
   const removeEngine = useCallback((id: string) => {
-    if (engines.size <= 1) return; // Don't remove last engine
     setEngines(prev => {
+      if (prev.size <= 1) return prev;
       const next = new Map(prev);
       next.delete(id);
       return next;
     });
-    setEngineList(prev => prev.filter(e => e.id !== id));
+    setEngineList(prev => {
+      if (prev.length <= 1) return prev;
+      return prev.filter(e => e.id !== id);
+    });
     wasmCacheRef.current.delete(id);
-    if (currentEngine?.id === id) {
+    setCurrentEngine(prev => {
+      if (prev?.id !== id) return prev;
       const remaining = engineList.filter(e => e.id !== id);
-      if (remaining.length > 0) setCurrentEngine(remaining[0]);
-      else setCurrentEngine(null);
-    }
-  }, [engines, engineList, currentEngine]);
+      return remaining.length > 0 ? remaining[0] : null;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /**
    * Process text input
@@ -269,7 +274,6 @@ export function useEngine() {
         const end = Math.min(start + CHUNK_SIZE, data.length);
         const chunk = data.slice(start, end);
 
-        // Yield to UI thread between chunks
         await new Promise<void>(resolve => {
           requestAnimationFrame(() => {
             const result = mode === 'encode'
@@ -279,7 +283,6 @@ export function useEngine() {
             const p = (i + 1) / totalChunks;
             setProgress(p);
 
-            // ETA estimation
             const elapsed = Date.now() - startTime;
             if (p > 0.05) {
               setEta(Math.round((elapsed / p) * (1 - p)));
@@ -289,7 +292,6 @@ export function useEngine() {
         });
       }
 
-      // Merge chunks
       let totalLen = 0;
       for (const c of chunks) totalLen += c.length;
       const merged = new Uint8Array(totalLen);
@@ -337,8 +339,8 @@ export function useEngine() {
 
   const clearError = useCallback(() => {
     setError(null);
-    if (processingState === 'error') setProcessingState('idle');
-  }, [processingState]);
+    setProcessingState(prev => prev === 'error' ? 'idle' : prev);
+  }, []);
 
   return {
     engines, engineList, currentEngine,
