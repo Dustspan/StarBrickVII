@@ -12,7 +12,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useEngine } from '@/hooks/useEngine';
 import { type ProcessingMode, type ProcessingResult } from '@/lib/engine/types';
-import { formatFileSize, formatDuration, downloadBlob, copyToClipboard, hexDump } from '@/lib/utils';
+import { formatFileSize, formatDuration, downloadBlob, copyToClipboard, hexDump, hexDumpLines } from '@/lib/utils';
 import S from './page.module.css';
 
 /* ── Color palette for engine sectors (12 colors, cycles) ── */
@@ -22,7 +22,8 @@ const SECTOR_COLORS = [
   '#06b6d4', '#8b5cf6', '#f43f5e', '#84cc16',
 ];
 
-const PAGE_SIZE = 4096; // chars per page in output
+const PAGE_SIZE = 4096; // chars per page in text mode
+const HEX_PAGE_LINES = 32; // lines per page in hex mode (32 × 16 = 512 bytes)
 
 export default function HomePage() {
   const {
@@ -39,6 +40,7 @@ export default function HomePage() {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [resultText, setResultText] = useState('');
+  const [resultBinary, setResultBinary] = useState<Uint8Array | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showHex, setShowHex] = useState(false);
@@ -173,6 +175,7 @@ export default function HomePage() {
   const handleProcess = useCallback(async () => {
     setResult(null);
     setResultText('');
+    setResultBinary(null);
     setOutputPage(1);
     setOutputExpanded(false);
 
@@ -185,13 +188,20 @@ export default function HomePage() {
 
     if (res && typeof res === 'object' && 'data' in res) {
       setResult(res);
+      // Store raw binary for hex view
       try {
-        const text = await res.data.text();
-        setResultText(text);
-      } catch { /* binary data, no text preview */ }
+        const buf = await res.data.arrayBuffer();
+        setResultBinary(new Uint8Array(buf));
+        setResultText(new TextDecoder().decode(buf));
+      } catch {
+        setResultBinary(null);
+        try { setResultText(await res.data.text()); } catch { /* empty */ }
+      }
     } else if (typeof res === 'string') {
+      const encoded = new TextEncoder().encode(res);
+      setResultBinary(encoded);
       setResultText(res);
-      setResult({ data: new Blob([res]), inputSize: new TextEncoder().encode(inputText).length, outputSize: new TextEncoder().encode(res).length, duration: 0 });
+      setResult({ data: new Blob([res]), inputSize: new TextEncoder().encode(inputText).length, outputSize: encoded.length, duration: 0 });
     }
   }, [file, inputText, mode, processFile, processText]);
 
@@ -211,13 +221,20 @@ export default function HomePage() {
   }, [result, mode]);
 
   /* ── Output pagination ── */
-  const totalPages = Math.max(1, Math.ceil(resultText.length / PAGE_SIZE));
+  const totalPages = showHex && resultBinary
+    ? Math.max(1, hexDumpLines(resultBinary.length) / HEX_PAGE_LINES)
+    : Math.max(1, Math.ceil(resultText.length / PAGE_SIZE));
+
   const paginatedText = outputExpanded
     ? resultText
     : resultText.slice((outputPage - 1) * PAGE_SIZE, outputPage * PAGE_SIZE);
 
-  const hexPreview = resultText
-    ? hexDump(new TextEncoder().encode(resultText).slice(0, 512))
+  const hexPreview = resultBinary
+    ? hexDump(
+        resultBinary,
+        outputExpanded ? 0 : (outputPage - 1) * HEX_PAGE_LINES * 16,
+        outputExpanded ? undefined : HEX_PAGE_LINES * 16,
+      )
     : '';
 
   /* ── Dial gradient — color-coded sectors ── */
@@ -445,7 +462,7 @@ export default function HomePage() {
           </div>
           <div className={S.outputWrap}>
             {/* Pagination controls — top-right corner */}
-            {resultText.length > PAGE_SIZE && !outputExpanded && (
+            {((!showHex && resultText.length > PAGE_SIZE) || (showHex && resultBinary && resultBinary.length > HEX_PAGE_LINES * 16)) && !outputExpanded && (
               <div className={S.pageControls}>
                 <button
                   className={S.pageBtn}

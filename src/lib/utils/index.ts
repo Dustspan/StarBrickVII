@@ -18,19 +18,26 @@ export function formatDuration(ms: number): string {
   return `${m}m ${s}s`;
 }
 
-export function hexDump(data: Uint8Array): string {
+export function hexDump(data: Uint8Array, offset = 0, limit?: number): string {
+  const end = limit != null ? Math.min(offset + limit, data.length) : data.length;
   const lines: string[] = [];
-  for (let i = 0; i < data.length; i += 16) {
+  for (let i = offset; i < end; i += 16) {
     const addr = i.toString(16).padStart(8, '0');
-    const hex = Array.from(data.slice(i, i + 16))
+    const chunk = data.slice(i, Math.min(i + 16, end));
+    const hex = Array.from(chunk)
       .map(b => b.toString(16).padStart(2, '0'))
       .join(' ');
-    const ascii = Array.from(data.slice(i, i + 16))
+    const ascii = Array.from(chunk)
       .map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.')
       .join('');
     lines.push(`${addr}  ${hex.padEnd(47)}  |${ascii}|`);
   }
   return lines.join('\n');
+}
+
+/** Number of hex dump lines for a given byte range (16 bytes per line) */
+export function hexDumpLines(byteCount: number): number {
+  return Math.max(1, Math.ceil(byteCount / 16));
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {
