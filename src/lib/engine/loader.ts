@@ -2,7 +2,7 @@
  * StarBrickVII — WASM Engine Loader
  *
  * Loads, instantiates, and caches WASM engines in the MAIN THREAD.
- * Robust validation: optional exports gracefully handled.
+ * Strict validation: ALL errors during validation are fatal.
  * Works with any v1.0-compliant WASM module.
  */
 
@@ -29,7 +29,8 @@ function writeBin(mem: WebAssembly.Memory, alloc: (s: number) => number, data: U
 }
 
 /**
- * Load a single WASM engine from URL or ArrayBuffer
+ * Load a single WASM engine from URL or ArrayBuffer.
+ * ALL validation errors are fatal — broken engines are rejected.
  */
 export async function loadWasmEngine(source: string | ArrayBuffer): Promise<{ engine: Engine; wasm: WasmInstance }> {
   let buffer: ArrayBuffer;
@@ -78,6 +79,7 @@ export async function loadWasmEngine(source: string | ArrayBuffer): Promise<{ en
 
   // Allocate a single reusable outLenPtr for all metadata reads
   const outLenPtr = alloc(4);
+  if (!outLenPtr) throw new Error('WASM alloc failed for metadata buffer');
   const u32 = new Uint32Array(memory.buffer, outLenPtr, 1);
 
   // Read metadata — sb_get_id is required, others have fallbacks
@@ -125,11 +127,12 @@ export async function loadWasmEngine(source: string | ArrayBuffer): Promise<{ en
     try { stateful = !!(exp.sb_is_stateful as () => number)(); } catch { /* default false */ }
   }
 
-  // Quick validation: encode a test string
+  // ── STRICT validation: encode a test string — ALL errors are fatal ──
   try {
     const testStr = 'StarBrickVII';
     const testBytes = new TextEncoder().encode(testStr);
     const inPtr = alloc(testBytes.length);
+    if (!inPtr) throw new Error('alloc failed for validation input');
     new Uint8Array(memory.buffer).set(testBytes, inPtr);
     const encPtr = encode(inPtr, testBytes.length, outLenPtr);
     const encLen = u32[0];
@@ -137,10 +140,9 @@ export async function loadWasmEngine(source: string | ArrayBuffer): Promise<{ en
       throw new Error('Engine encode returned empty result for test input');
     }
   } catch (err) {
-    if (err instanceof Error && err.message.includes('Engine encode')) {
-      throw new Error(`Engine validation failed: ${err.message}`);
-    }
-    // Other errors during validation are non-fatal
+    // ALL validation errors are fatal — no silent swallowing
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Engine "${id}" validation failed: ${msg}`);
   }
 
   const engine: Engine = { id, name, desc, capabilities: { binarySafe, selfInverse, reversible, stateful } };
@@ -162,6 +164,7 @@ export function wasmEncode(wasm: WasmInstance, text: string): string {
   const { memory, alloc, encode } = wasm;
   const { ptr, len } = writeStr(memory, alloc, text);
   const outLenPtr = alloc(4);
+  if (!outLenPtr) throw new Error('WASM alloc failed for output length');
   const resultPtr = encode(ptr, len, outLenPtr);
   const resultLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
   if (!resultPtr || resultLen === 0) return '';
@@ -176,6 +179,7 @@ export function wasmDecode(wasm: WasmInstance, text: string): string {
   const { memory, alloc, decode } = wasm;
   const { ptr, len } = writeStr(memory, alloc, text);
   const outLenPtr = alloc(4);
+  if (!outLenPtr) throw new Error('WASM alloc failed for output length');
   const resultPtr = decode(ptr, len, outLenPtr);
   const resultLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
   if (!resultPtr || resultLen === 0) return '';
@@ -190,6 +194,7 @@ export function wasmEncodeBinary(wasm: WasmInstance, data: Uint8Array): Uint8Arr
   const { memory, alloc, encode } = wasm;
   const { ptr, len } = writeBin(memory, alloc, data);
   const outLenPtr = alloc(4);
+  if (!outLenPtr) throw new Error('WASM alloc failed for output length');
   const resultPtr = encode(ptr, len, outLenPtr);
   const resultLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
   if (!resultPtr || resultLen === 0) return new Uint8Array(0);
@@ -203,6 +208,7 @@ export function wasmDecodeBinary(wasm: WasmInstance, data: Uint8Array): Uint8Arr
   const { memory, alloc, decode } = wasm;
   const { ptr, len } = writeBin(memory, alloc, data);
   const outLenPtr = alloc(4);
+  if (!outLenPtr) throw new Error('WASM alloc failed for output length');
   const resultPtr = decode(ptr, len, outLenPtr);
   const resultLen = new Uint32Array(memory.buffer, outLenPtr, 1)[0];
   if (!resultPtr || resultLen === 0) return new Uint8Array(0);
