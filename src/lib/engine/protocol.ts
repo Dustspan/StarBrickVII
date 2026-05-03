@@ -4,12 +4,10 @@
 
 export const PRESET_ENGINES = [
   '/engines/base64.wasm',
-  '/engines/base32.wasm',
-  '/engines/base85.wasm',
-  '/engines/base58.wasm',
-  '/engines/hex.wasm',
+  '/engines/hex16.wasm',
   '/engines/binary.wasm',
-  '/engines/pct-encode.wasm',
+  '/engines/url-encode.wasm',
+  '/engines/base45.wasm',
 ] as const;
 
 export const APP_BASE_PATH = '/StarBrickVII';
